@@ -17,9 +17,13 @@ class FinanceConfigManager:
     MONTHLY_CONFIG_DIR = 'configs/monthly/'
     DEFAULT_CONFIG_FILE = 'financial_config_default.yaml'
 
-    def __init__(self, current_month: int, current_year: int):
+    def __init__(self, current_month: int, current_year: int, default_config_dir, default_config_file, monthly_config_dir):
         self.current_month = current_month
         self.current_year = current_year
+        self._default_config_dir = default_config_dir if default_config_file is not None else self.DEFAULT_CONFIG_DIR
+        self._default_config_file = default_config_file if default_config_file is not None else self.DEFAULT_CONFIG_FILE
+        self._monthly_config_dir = monthly_config_dir if monthly_config_dir is not None else self.MONTHLY_CONFIG_DIR
+
         self._config = {}
         self.budget_manager = BudgetManager()
         self.validation_messages = []  # Store validation messages here
@@ -30,16 +34,16 @@ class FinanceConfigManager:
 
     def _ensure_config_dirs_exist(self):
         """Ensures the default and monthly config directories exist."""
-        os.makedirs(self.DEFAULT_CONFIG_DIR, exist_ok=True)
-        os.makedirs(self.MONTHLY_CONFIG_DIR, exist_ok=True)
+        os.makedirs(self._default_config_dir, exist_ok=True)
+        os.makedirs(self._monthly_config_dir, exist_ok=True)
 
     def _load_and_prepare_config(self):
         """
         Loads the monthly config if available, otherwise copies from default and loads it.
         """
         monthly_config_filename = f"financial_config_{self.current_year:04d}_{self.current_month:02d}.yaml"
-        self.monthly_config_path = os.path.join(self.MONTHLY_CONFIG_DIR, monthly_config_filename)
-        self.default_config_path = os.path.join(self.DEFAULT_CONFIG_DIR, self.DEFAULT_CONFIG_FILE)
+        self.monthly_config_path = os.path.join(self._monthly_config_dir, monthly_config_filename)
+        self.default_config_path = os.path.join(self._default_config_dir, self._default_config_file)
 
         if not os.path.exists(self.default_config_path):
             raise FileNotFoundError(
