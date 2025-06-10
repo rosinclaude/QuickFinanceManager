@@ -2,9 +2,10 @@
 
 import streamlit as st
 import datetime
-import uuid  # For generating unique IDs for transactions
+import uuid
 from modules.managers.transaction_manager import TransactionManager
 from modules.managers.finance_config_manager import FinanceConfigManager
+from modules.managers.payee_manager import PayeeManager  # Import the new manager
 
 
 # --- Helper Functions for UI Reusability ---
@@ -180,6 +181,11 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
     structured_categories = config_manager.get_category_structure_for_ui()
     transaction_types = ["Expense", "Income", "Transfer"]
 
+    # Get existing payee names from the transaction_manager's payee_manager
+    existing_payee_names = transaction_manager.payee_manager.get_all_payee_names()
+    # Add an empty string to options to allow for no initial selection/placeholder
+    payee_options = [''] + existing_payee_names
+
     # --- Step 1: Select Transaction Type (outside any form for immediate reactivity) ---
     selected_transaction_type = st.radio(
         "Select Transaction Type",
@@ -196,8 +202,8 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
     if 'global_transaction_data' not in st.session_state:
         st.session_state.global_transaction_data = {
             'date': datetime.date.today(),
-            'payee': '',  # Moved here
-            'account': '',  # Moved here
+            'payee': '',
+            'account': '',
             'uploaded_file': None
         }
 
@@ -207,13 +213,20 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
         key="general_date"
     )
 
-    # Payer/Payee field for the overall transaction
-    st.session_state.global_transaction_data['payee'] = st.text_input(
+    # --- Payee field using st.selectbox with accept_new_options ---
+    current_payee_value = st.session_state.global_transaction_data['payee']
+    # Ensure current_payee_value is in payee_options to set the index correctly, or default to 0
+    initial_payee_idx = payee_options.index(current_payee_value) if current_payee_value in payee_options else 0
+
+    selected_payee = st.selectbox(
         "Payer/Payee (Overall)",
-        placeholder="e.g., Supermarket, Monthly Salary, Bank Transfer",
-        value=st.session_state.global_transaction_data['payee'],
-        key="general_payee"
+        payee_options,
+        index=initial_payee_idx,
+        placeholder="Type or select a payee (e.g., Supermarket, Monthly Salary)",
+        key="general_payee_selectbox",
+        accept_new_options=True  # Allows typing new options
     )
+    st.session_state.global_transaction_data['payee'] = selected_payee
 
     # Account field for the overall transaction
     initial_account_display = f"{st.session_state.global_transaction_data['account']} ({_get_account_type_for_display(st.session_state.global_transaction_data['account'], config_manager)})" if \
@@ -232,7 +245,6 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
     uploaded_file = st.file_uploader("Attach Invoice/Receipt (Optional)", type=['png', 'jpg', 'jpeg', 'pdf'],
                                      key="general_file_uploader")
 
-    # Generate a unique TransactionID once for the entire conceptual transaction
     if 'current_transaction_id' not in st.session_state:
         st.session_state.current_transaction_id = f"TRN-{int(datetime.datetime.now().timestamp())}-{uuid.uuid4().hex[:6].upper()}"
 
@@ -243,19 +255,17 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
 
         split_key = f'{selected_transaction_type.lower()}_splits'
 
-        # Initialize/reset splits in session state (if type changed or first load)
         if split_key not in st.session_state or st.session_state.get(
                 'last_selected_transaction_type') != selected_transaction_type:
             st.session_state[split_key] = [{
                 'amount': 0.0,
-                'description': '',  # Moved here
-                'notes': '',  # Moved here
+                'description': '',
+                'notes': '',
                 'budget_scope': '', 'category': '', 'sub_category': '',
                 'full_budget_path': '', 'categories_in_path': []
             }]
             st.session_state['last_selected_transaction_type'] = selected_transaction_type
 
-        # --- Add/Remove Split Buttons (OUTSIDE THE FORM) ---
         col_split_btns = st.columns([1, 1, 3])
         with col_split_btns[0]:
             if st.button("Add Another Split", key=f"{selected_transaction_type}_add_split_btn_outside"):
@@ -268,7 +278,6 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
         with col_split_btns[1]:
             if len(st.session_state[split_key]) > 1:
                 if st.button("Remove Last Split", key=f"{selected_transaction_type}_remove_split_btn_outside"):
-                    # Clear the associated category UI state before popping
                     prefix_to_clear = f"{selected_transaction_type}_split_{len(st.session_state[split_key]) - 1}_cat_ui"
                     if f'{prefix_to_clear}_budget_scope' in st.session_state:
                         del st.session_state[f'{prefix_to_clear}_budget_scope']
@@ -279,15 +288,12 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                     st.session_state[split_key].pop()
                     st.rerun()
 
-        # --- Render Inputs for Each Split (Still outside the submission form) ---
         total_amount_sum = 0.0
-        st.session_state[
-            f'{selected_transaction_type.lower()}_current_split_values'] = []  # To hold current values for submission
+        st.session_state[f'{selected_transaction_type.lower()}_current_split_values'] = []
 
         for i, split_data in enumerate(st.session_state[split_key]):
             st.markdown(f"**Split {i + 1}**")
 
-            # Row 1: Amount
             split_data['amount'] = st.number_input(
                 "Amount",
                 min_value=0.0,
@@ -297,7 +303,6 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
             )
             total_amount_sum += split_data['amount']
 
-            # Row 2: Description and Notes
             cols_desc_notes = st.columns(2)
             with cols_desc_notes[0]:
                 split_data['description'] = st.text_input(
@@ -314,7 +319,6 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                     placeholder="Additional notes for this split."
                 )
 
-            # Row 3: Category Selection
             st.write("Category for this split:")
             scope_opts = config_manager.get_budget_scopes() if selected_transaction_type == "Expense" else ["Income"]
 
@@ -322,10 +326,8 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                 structured_categories,
                 scope_opts,
                 session_state_key_prefix=f"{selected_transaction_type}_split_{i}_cat_ui",
-                # Unique prefix for this split's selectors
                 is_transfer=False
             )
-            # After the call, retrieve the values from session state
             split_data['budget_scope'] = st.session_state[f"{selected_transaction_type}_split_{i}_cat_ui_budget_scope"]
             split_data['category'] = \
             st.session_state[f"{selected_transaction_type}_split_{i}_cat_ui_categories_in_path"][0] if st.session_state[
@@ -335,20 +337,17 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                 f"{selected_transaction_type}_split_{i}_cat_ui_full_budget_path"]
 
             st.session_state[f'{selected_transaction_type.lower()}_current_split_values'].append(split_data)
-            st.markdown("---")  # Separator between splits
+            st.markdown("---")
 
         st.markdown(f"**Calculated Total Amount for Splits: ${total_amount_sum:.2f}**")
 
-        # --- Main Submission Form (ONLY CONTAINS SUBMIT BUTTON) ---
         with st.form(key=f"{selected_transaction_type.lower()}_submission_form"):
             st.write("Click 'Save Transaction' to finalize your entry.")
             submitted = st.form_submit_button(f"Save {selected_transaction_type} Transaction")
 
             if submitted:
-                # Re-validate here using the current state of session_state
                 is_valid = True
 
-                # Validate general transaction info
                 if not st.session_state.global_transaction_data['payee']:
                     st.error("Overall Payer/Payee is required.")
                     is_valid = False
@@ -360,17 +359,14 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                     st.error("Total amount of splits must be positive.")
                     is_valid = False
 
-                # Check each split's data (from session_state)
                 for i, split_data in enumerate(
                         st.session_state[f'{selected_transaction_type.lower()}_current_split_values']):
-                    if split_data['amount'] <= 0 or not split_data['category'] or not split_data[
-                        'description']:  # Description is now required for splits
+                    if split_data['amount'] <= 0 or not split_data['category'] or not split_data['description']:
                         st.error(f"Split {i + 1}: positive Amount, Description, and Category are required.")
                         is_valid = False
 
                 if is_valid:
                     try:
-                        # Prepare splits for transaction manager (exclude payee, account as they are global)
                         splits_for_manager = []
                         for split_data in st.session_state[f'{selected_transaction_type.lower()}_current_split_values']:
                             splits_for_manager.append({
@@ -387,26 +383,22 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                             transaction_id=st.session_state.current_transaction_id,
                             transaction_type=selected_transaction_type,
                             date=st.session_state.global_transaction_data['date'],
-                            payee=st.session_state.global_transaction_data['payee'],  # Passed globally
-                            account=st.session_state.global_transaction_data['account'],  # Passed globally
+                            payee=st.session_state.global_transaction_data['payee'],
+                            account=st.session_state.global_transaction_data['account'],
                             uploaded_file=uploaded_file,
-                            splits=splits_for_manager  # Pass the prepared splits
+                            splits=splits_for_manager
                         )
                         st.success(
                             f"{selected_transaction_type} transaction saved successfully with ID: **{st.session_state.current_transaction_id}**")
 
-                        # --- Clear all form values upon successful submission ---
-                        # Reset splits
                         st.session_state[split_key] = [{
                             'amount': 0.0, 'description': '', 'notes': '',
                             'budget_scope': '', 'category': '', 'sub_category': '',
                             'full_budget_path': '', 'categories_in_path': []
                         }]
-                        # Reset global transaction data
                         st.session_state.global_transaction_data = {
                             'date': datetime.date.today(), 'payee': '', 'account': '', 'uploaded_file': None
                         }
-                        # Also clear the specific split's category UI state
                         for i in range(
                                 len(st.session_state[f'{selected_transaction_type.lower()}_current_split_values'])):
                             prefix_to_clear = f"{selected_transaction_type}_split_{i}_cat_ui"
@@ -416,7 +408,6 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                                 del st.session_state[f'{prefix_to_clear}_subcategory']
                                 del st.session_state[f'{prefix_to_clear}_full_budget_path']
 
-                        # Generate a new transaction ID for the next entry
                         st.session_state.current_transaction_id = f"TRN-{int(datetime.datetime.now().timestamp())}-{uuid.uuid4().hex[:6].upper()}"
                         st.rerun()
                     except Exception as e:
@@ -426,15 +417,14 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
         st.markdown("---")
         st.subheader("Transfer Details")
 
-        # Initialize transfer specific data in session state
         if 'transfer_data' not in st.session_state or st.session_state.get(
                 'last_selected_transaction_type') != selected_transaction_type:
             st.session_state.transfer_data = {
                 'amount': 0.0,
                 'source_account': '',
                 'destination_account': '',
-                'description': '',  # Moved here
-                'notes': '',  # Moved here
+                'description': '',
+                'notes': '',
                 'budget_scope': '',
                 'main_category': '',
                 'sub_category': '',
@@ -443,7 +433,6 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
             }
             st.session_state['last_selected_transaction_type'] = selected_transaction_type
 
-        # --- Transfer-specific inputs (OUTSIDE THE SUBMISSION FORM) ---
         col1, col2 = st.columns(2)
         with col1:
             st.session_state.transfer_data['amount'] = st.number_input(
@@ -454,7 +443,6 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                 key="transfer_amount_outside"
             )
 
-            # Transfer From Account
             initial_source_acc_display = f"{st.session_state.transfer_data['source_account']} ({_get_account_type_for_display(st.session_state.transfer_data['source_account'], config_manager)})" if \
             st.session_state.transfer_data['source_account'] else None
             source_acc_idx = account_options.index(
@@ -469,7 +457,6 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
             )
             st.session_state.transfer_data['source_account'] = _get_account_name_from_display(source_account_display)
 
-            # Transfer Description
             st.session_state.transfer_data['description'] = st.text_input(
                 "Description (Transfer)",
                 value=st.session_state.transfer_data['description'],
@@ -478,7 +465,6 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
             )
 
         with col2:
-            # Dynamic Category selection for transfer (optional)
             transfer_scope_opts = [''] + config_manager.get_budget_scopes()
 
             _display_dynamic_category_selector_ui(
@@ -487,14 +473,12 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                 session_state_key_prefix="transfer_cat_ui",
                 is_transfer=True
             )
-            # After the call, retrieve the values from session state
             st.session_state.transfer_data['budget_scope'] = st.session_state["transfer_cat_ui_budget_scope"]
             st.session_state.transfer_data['main_category'] = st.session_state["transfer_cat_ui_categories_in_path"][
                 0] if st.session_state["transfer_cat_ui_categories_in_path"] else ""
             st.session_state.transfer_data['sub_category'] = st.session_state["transfer_cat_ui_subcategory"]
             st.session_state.transfer_data['full_budget_path'] = st.session_state["transfer_cat_ui_full_budget_path"]
 
-            # Transfer To Account
             initial_dest_acc_display = f"{st.session_state.transfer_data['destination_account']} ({_get_account_type_for_display(st.session_state.transfer_data['destination_account'], config_manager)})" if \
             st.session_state.transfer_data['destination_account'] else None
             dest_acc_idx = account_options.index(
@@ -510,7 +494,6 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
             st.session_state.transfer_data['destination_account'] = _get_account_name_from_display(
                 destination_account_display)
 
-            # Transfer Notes
             st.session_state.transfer_data['notes'] = st.text_area(
                 "Notes (Transfer)",
                 value=st.session_state.transfer_data['notes'],
@@ -518,7 +501,6 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                 placeholder="Any additional notes about this transfer."
             )
 
-        # --- Main Transfer Submission Form ---
         with st.form(key="transfer_submission_form"):
             st.write("Click 'Save Transfer' to finalize your entry.")
             submitted = st.form_submit_button("Save Transfer")
@@ -540,16 +522,15 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                     try:
                         related_transaction_id_for_transfer = st.session_state.current_transaction_id
 
-                        # Transfer payee is the overall payee (from global data)
                         overall_payee = st.session_state.global_transaction_data['payee']
 
                         transfer_splits = [
                             {
-                                'payee': overall_payee,  # Global payee for transfer
+                                'payee': overall_payee,
                                 'amount': -amount,
-                                'account': source_account_name,  # Specific to split
-                                'description': st.session_state.transfer_data['description'],  # Split-specific
-                                'notes': st.session_state.transfer_data['notes'],  # Split-specific
+                                'account': source_account_name,
+                                'description': st.session_state.transfer_data['description'],
+                                'notes': st.session_state.transfer_data['notes'],
                                 'budget_scope': st.session_state.transfer_data['budget_scope'],
                                 'category': st.session_state.transfer_data['main_category'] if
                                 st.session_state.transfer_data['main_category'] else "Transfer Out",
@@ -558,11 +539,11 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                                 st.session_state.transfer_data['full_budget_path'] else "Transfer/Transfer Out"
                             },
                             {
-                                'payee': overall_payee,  # Global payee for transfer
+                                'payee': overall_payee,
                                 'amount': amount,
-                                'account': destination_account_name,  # Specific to split
-                                'description': st.session_state.transfer_data['description'],  # Split-specific
-                                'notes': st.session_state.transfer_data['notes'],  # Split-specific
+                                'account': destination_account_name,
+                                'description': st.session_state.transfer_data['description'],
+                                'notes': st.session_state.transfer_data['notes'],
                                 'budget_scope': st.session_state.transfer_data['budget_scope'],
                                 'category': st.session_state.transfer_data['main_category'] if
                                 st.session_state.transfer_data['main_category'] else "Transfer In",
@@ -572,14 +553,11 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                             }
                         ]
 
-                        # For transfers, the 'payee' and 'account' in add_manual_transaction will be overridden by the splits.
-                        # So we pass dummy values, or use the global payee and account from st.session_state.global_transaction_data
-                        # Let's pass them as the global ones since `add_manual_transaction` is modified.
                         transaction_manager.add_manual_transaction(
                             transaction_id=related_transaction_id_for_transfer,
                             transaction_type="Transfer",
                             date=st.session_state.global_transaction_data['date'],
-                            payee=st.session_state.global_transaction_data['payee'],  # Use the global payee
+                            payee=st.session_state.global_transaction_data['payee'],
                             account="",  # Account is split-specific for transfers
                             uploaded_file=uploaded_file,
                             splits=transfer_splits,
@@ -588,7 +566,6 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                         st.success(
                             f"Transfer of ${amount:.2f} from {source_account_name} to {destination_account_name} saved successfully!")
 
-                        # --- Clear all form values upon successful submission ---
                         st.session_state.transfer_data = {
                             'amount': 0.0, 'source_account': '', 'destination_account': '',
                             'description': '', 'notes': '',
@@ -598,7 +575,6 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                         st.session_state.global_transaction_data = {
                             'date': datetime.date.today(), 'payee': '', 'account': '', 'uploaded_file': None
                         }
-                        # Clear transfer specific category UI state
                         if 'transfer_cat_ui_budget_scope' in st.session_state:
                             del st.session_state['transfer_cat_ui_budget_scope']
                             del st.session_state['transfer_cat_ui_categories_in_path']
@@ -610,4 +586,7 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                     except Exception as e:
                         st.error(f"Failed to save transfer: {e}")
 
-# TODO: Try to save expense, income and transfer. Seems Good.
+# TODO: Try to save income and transfer. Seems Good. Expense works
+# TODO: Add streamlit-textcomplete or steamlit-searchbox to add autocompletion to the payee/payer field.
+# TODO: Add workaround for payee/payer field that does not show the user the keyboard.
+#  Gemini propose using a radio button for add new payee and select payee, which will display relavant fields
