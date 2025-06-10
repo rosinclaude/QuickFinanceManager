@@ -3,6 +3,7 @@
 import streamlit as st
 import datetime
 from modules.managers.csv_manager import CSVManager
+from modules.managers.payee_manager import PayeeManager
 from modules.managers.transaction_manager import TransactionManager
 from modules.managers.finance_config_manager import FinanceConfigManager  # Renamed import
 from modules.ui_tabs.manual_entry_tab import display_manual_entry_tab
@@ -35,7 +36,10 @@ def get_managers():
     finance_config_manager = None
     try:
         # Initialize FinanceConfigManager with current month/year
-        finance_config_manager = FinanceConfigManager(current_month=current_month, current_year=current_year)
+        finance_config_manager = FinanceConfigManager(current_month=current_month, current_year=current_year,
+                                                      default_config_dir='configs/defaults/',
+                                                      default_config_file='financial_config_default.yaml',
+                                                      monthly_config_dir='configs/monthly/')
     except FileNotFoundError as e:
         st.error(
             f"Configuration File Missing: {e}. Please ensure 'configs/defaults/financial_config_default.yaml' exists.")
@@ -46,12 +50,18 @@ def get_managers():
         # For other critical errors, also stop.
         st.stop()
 
-    transaction_manager = TransactionManager(csv_manager, finance_config_manager)
+    # PayeeManager now correctly takes CSVManager as its dependency.
+    payee_manager = PayeeManager(csv_manager=csv_manager)
 
-    return transaction_manager, finance_config_manager
+    # TransactionManager takes all relevant managers.
+    transaction_manager = TransactionManager(csv_manager=csv_manager,
+                                             config_manager=finance_config_manager,
+                                             payee_manager=payee_manager)
+
+    return transaction_manager, finance_config_manager, payee_manager
 
 
-transaction_manager, finance_config_manager = get_managers()
+transaction_manager, finance_config_manager, payee_manager = get_managers()
 
 # --- Display Budget Validation Messages ---
 validation_messages = finance_config_manager.get_validation_messages()
