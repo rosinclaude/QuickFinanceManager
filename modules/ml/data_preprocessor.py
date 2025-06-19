@@ -37,7 +37,8 @@ try:
 except ImportError:
     pass  # No worries if TF isn't available, this block is just for import success/failure reporting elsewhere.
 
-
+#TODO: Initialise the data preprocessor to train models. See transaction_manager to get same exact init variable
+# declared in app_config file.
 class DataPreprocessor:
     """
     The DataPreprocessor class is responsible for all data transformation steps
