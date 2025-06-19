@@ -11,15 +11,17 @@ class CSVManager:
     Ensures default files with headers are created if they don't exist.
     """
 
-    def __init__(self, transactions_csv_path: str, payees_csv_path: str):
+    def __init__(self, transactions_csv_path: str, payees_csv_path: str, metadata_csv_path: str):
         """
         Initializes the CSVManager.
         Args:
             transactions_csv_path (str): Full path to the transactions CSV file.
             payees_csv_path (str): Full path to the payees CSV file.
+            metadata_csv_path (str): Full path to the metadata CSV file.
         """
         self.transactions_csv_path = transactions_csv_path
         self.payees_csv_path = payees_csv_path
+        self.metadata_csv_path = metadata_csv_path # NEW
 
         # Ensure the data directory exists where CSVs will be stored
         os.makedirs(os.path.dirname(transactions_csv_path), exist_ok=True)
@@ -27,6 +29,7 @@ class CSVManager:
         # Ensure default CSV files exist with proper headers
         self._ensure_transactions_csv_exists()
         self._ensure_payees_csv_exists()
+        self._ensure_metadata_csv_exists() # NEW
 
     def _ensure_transactions_csv_exists(self):
         """
@@ -60,6 +63,16 @@ class CSVManager:
             ]
             df = pd.DataFrame(columns=columns)
             df.to_csv(self.payees_csv_path, index=False)
+
+    def _ensure_metadata_csv_exists(self):  # NEW METHOD
+        """Creates the metadata CSV file with headers if it does not exist."""
+        if not os.path.exists(self.metadata_csv_path):
+            print(f"Creating default metadata CSV at: {self.metadata_csv_path}")
+            columns = [
+                "MetadataID", "TransactionID", "SplitIndex", "Key", "Value", "Source", "TimestampAdded"
+            ]
+            df = pd.DataFrame(columns=columns)
+            df.to_csv(self.metadata_csv_path, index=False)
 
     def load_transactions(self) -> pd.DataFrame:
         """Loads transaction data from the CSV file.
@@ -214,4 +227,44 @@ class CSVManager:
             print(f"Payees saved to {self.payees_csv_path}")
         except Exception as e:
             print(f"Error saving payees CSV: {e}")
+            raise
+
+    def load_metadata(self) -> pd.DataFrame:  # NEW METHOD
+        """Loads metadata from the CSV file."""
+        try:
+            metadata_column_types = {
+                "MetadataID": str,
+                "TransactionID": str,
+                "SplitIndex": int,
+                "Key": str,
+                "Value": str,
+                "Source": str,
+                "TimestampAdded": str
+            }
+            df = pd.read_csv(self.metadata_csv_path, dtype=metadata_column_types)
+            for col, d_type in metadata_column_types.items():
+                if col not in df.columns:
+                    print(f"Column '{col}' not found in metadata CSV. Adding with default values.")
+                    df[col] = '' if d_type == str else (0 if d_type == int else '')  # int for SplitIndex
+            df['TimestampAdded'] = pd.to_datetime(df['TimestampAdded'], errors='coerce')
+            df['TimestampAdded'] = df['TimestampAdded'].apply(lambda x: x if pd.notna(x) else None)
+            for col in ['TransactionID', 'Key', 'Value', 'Source']:
+                if col in df.columns: df[col] = df[col].fillna('')
+            return df
+        except pd.errors.EmptyDataError:
+            print(f"Metadata CSV is empty. Returning empty DataFrame.")
+            self._ensure_metadata_csv_exists()
+            return pd.DataFrame(columns=list(metadata_column_types.keys()))
+        except Exception as e:
+            print(f"Error loading metadata CSV: {e}")
+            raise
+
+    def save_metadata(self, df: pd.DataFrame):  # NEW METHOD
+        """Saves metadata to the CSV file."""
+        df['TimestampAdded'] = df['TimestampAdded'].apply(lambda x: x.isoformat() if x is not None else '')
+        try:
+            df.to_csv(self.metadata_csv_path, index=False)
+            print(f"Metadata saved to {self.metadata_csv_path}")
+        except Exception as e:
+            print(f"Error saving metadata CSV: {e}")
             raise
