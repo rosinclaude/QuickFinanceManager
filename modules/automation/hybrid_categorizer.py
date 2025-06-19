@@ -197,7 +197,7 @@ class HybridCategorizer:
 
         combined_text = f"Description: {description}. Payee: {payee}. Account: {account}. Notes: {current_notes}".strip()
 
-        # --- 1. Rule-Based Categorization ---
+        # --- 1. Rule-Based Categorization ---  ## Won't be used. TODO: Remove rule based categorization.
         # Rule-based now checks against ALL_VALID_PATHS internally based on default_category_mapping
         rule_based_path = self._apply_rule_based_categorization(description, payee, account, transaction_type)
         if rule_based_path:
