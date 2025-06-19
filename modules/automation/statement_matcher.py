@@ -4,6 +4,11 @@ import uuid
 import pandas as pd
 import datetime
 
+#TODO: Match transactions from the statements to the one existing in the database. Extract additional infos.
+# Also, match identical transaction but from two different statements: I Pay my credit card, one bank state payment emitted
+# The other mention payment received. Or even in a broader sense, add a module transaction matching for a more general one than just statement, if
+# necessary.
+
 
 # Placeholder for future imports like OCRProcessor, LLMCategorizer, utils
 # from ocr_processor import OCRProcessor
