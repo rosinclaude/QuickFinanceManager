@@ -37,6 +37,8 @@ ml_config:
   payee_recognizer_model_path: 'models/payee_model/model.joblib' # Path to trained payee recognition model
   payee_recognizer_vectorizer_path: 'models/payee_model/vectorizer.joblib' # Path to TF-IDF vectorizer for payee
   payee_recognizer_label_encoder_path: 'models/payee_model/label_encoder.joblib' # Path to label encoder for payee
+  selected_model_type: 'decision_tree_categorizer' # decision_tree_categorizer, logistic_regression_categorizer, tensorflow_dnn_categorizer, pytorch_dnn_categorizer
+  model_artifact_base_dir: 'models/model_artifact_base_dir/'
 
 # OCR Processor Configuration
 ocr_config:
