@@ -8,7 +8,7 @@ from typing import Dict, List, Any, Optional
 from modules.managers.transaction_manager import TransactionManager
 from modules.managers.finance_config_manager import FinanceConfigManager
 from modules.managers.payee_manager import PayeeManager
-from modules.managers.app_config_manager import AppConfigManager  # NEW: For app settings
+from modules.managers.app_config_manager import AppConfigManager
 
 
 # --- Helper Functions for UI Reusability ---
@@ -38,7 +38,7 @@ def _display_dynamic_category_selector_ui(
         structured_categories: Dict[str, Any],  # Now expects the recursive structure
         scope_options: List[str],
         session_state_key_prefix: str,  # Unique prefix for session state keys
-        is_transfer: bool = False  # Flag for transfer-specific path handling
+        # is_transfer: bool = False # Removed as logic can be handled by scope_options and initial state
 ) -> None:
     """
     Displays dynamic category selection UI elements (scope, main, sub)
@@ -48,11 +48,8 @@ def _display_dynamic_category_selector_ui(
     # Initialize session state for this selector if not present
     if f'{session_state_key_prefix}_budget_scope' not in st.session_state:
         st.session_state[f'{session_state_key_prefix}_budget_scope'] = ''
-    if f'{session_state_key_prefix}_category_path_elements' not in st.session_state:  # Renamed from categories_in_path
+    if f'{session_state_key_prefix}_category_path_elements' not in st.session_state:
         st.session_state[f'{session_state_key_prefix}_category_path_elements'] = []
-    # No longer need a separate subcategory field, as full_budget_path covers it
-    # if f'{session_state_key_prefix}_subcategory' not in st.session_state:
-    #     st.session_state[f'{session_state_key_prefix}_subcategory'] = ''
     if f'{session_state_key_prefix}_full_budget_path' not in st.session_state:
         st.session_state[f'{session_state_key_prefix}_full_budget_path'] = ''
 
@@ -75,18 +72,17 @@ def _display_dynamic_category_selector_ui(
     # If scope changes, reset deeper levels and update session state
     if selected_scope_ui != current_scope:
         st.session_state[f'{session_state_key_prefix}_category_path_elements'] = []
-        st.session_state[
-            f'{session_state_key_prefix}_full_budget_path'] = selected_scope_ui if selected_scope_ui else ''
+        st.session_state[f'{session_state_key_prefix}_full_budget_path'] = selected_scope_ui if selected_scope_ui else ''
         st.session_state[f'{session_state_key_prefix}_budget_scope'] = selected_scope_ui
         st.rerun()  # Rerun to update subsequent selectboxes based on new scope
 
     # Update session state for the selected scope
     st.session_state[f'{session_state_key_prefix}_budget_scope'] = selected_scope_ui
-    full_budget_path_accumulator = selected_scope_ui
+    # full_budget_path_accumulator = selected_scope_ui # No longer directly needed
 
     current_level_dict = structured_categories.get(selected_scope_ui, {})
 
-    selected_category_path_list_temp = []  # Temp list for current selection in this rerun
+    selected_category_path_list_temp = [selected_scope_ui] if selected_scope_ui else [] # Start with scope for path elements
 
     level_num = 1
     # Loop to dynamically create selectboxes for nested categories
@@ -94,9 +90,12 @@ def _display_dynamic_category_selector_ui(
         if isinstance(current_level_dict, dict) and current_level_dict:  # If there are more levels
             level_options = [''] + sorted(list(current_level_dict.keys()))
 
+            # Determine the value to pre-select for this level
             prev_level_val = ""
-            if len(current_path_elements) >= level_num:
-                prev_level_val = current_path_elements[level_num - 1]
+            # current_path_elements will now include the scope as the first element if selected
+            # So, current_path_elements[level_num] corresponds to category level `level_num`
+            if len(current_path_elements) > level_num: # > to account for scope being at index 0
+                prev_level_val = current_path_elements[level_num]
 
             initial_level_idx = level_options.index(prev_level_val) if prev_level_val in level_options else 0
 
@@ -108,21 +107,24 @@ def _display_dynamic_category_selector_ui(
                 key=f"{session_state_key_prefix}_cat_level_{level_num}_selection"
             )
 
-            # If selection changes at this level, reset deeper levels and rerun
-            current_category_at_level_in_path = current_path_elements[level_num - 1] if len(
-                current_path_elements) >= level_num else None
-            if selected_category_at_level != current_category_at_level_in_path:
+            # Check if selection changed from the previous state for this level
+            # Compare with the current_path_elements (which holds previous state including scope)
+            is_level_changed = (len(current_path_elements) <= level_num or
+                                selected_category_at_level != current_path_elements[level_num])
+
+            if is_level_changed:
                 # Update current_path_elements up to this level
-                st.session_state[
-                    f'{session_state_key_prefix}_category_path_elements'] = selected_category_path_list_temp + (
-                    [selected_category_at_level] if selected_category_at_level else [])
-                st.session_state[f'{session_state_key_prefix}_full_budget_path'] = ":".join(
-                    st.session_state[f'{session_state_key_prefix}_category_path_elements']) if st.session_state[
-                    f'{session_state_key_prefix}_category_path_elements'] else selected_scope_ui  # Join with ':'
+                new_path_elements = selected_category_path_list_temp[:level_num] # Truncate to current level
                 if selected_category_at_level:
-                    st.rerun()  # Rerun to update the next level's selectbox
-                else:  # User cleared selection at this level
-                    break  # Stop going deeper
+                    new_path_elements.append(selected_category_at_level)
+
+                st.session_state[f'{session_state_key_prefix}_category_path_elements'] = new_path_elements
+                st.session_state[f'{session_state_key_prefix}_full_budget_path'] = ":".join(new_path_elements)
+
+                if selected_category_at_level: # Only rerun if a selection was made (not cleared)
+                    st.rerun()
+                else: # User cleared selection at this level
+                    break # Stop going deeper
 
             if selected_category_at_level:
                 selected_category_path_list_temp.append(selected_category_at_level)
@@ -134,24 +136,11 @@ def _display_dynamic_category_selector_ui(
         else:  # Current level is not a dictionary (e.g., it's a leaf node {}) or it's an empty dictionary
             break
 
-    # Final update of session state values for the full budget path
+    # Final update of session state values for the full budget path based on current selections
+    # This ensures accuracy if user clears a lower-level selection or no deeper levels exist.
     st.session_state[f'{session_state_key_prefix}_category_path_elements'] = selected_category_path_list_temp
-    # Reconstruct full budget path using ':' as separator
-    st.session_state[f'{session_state_key_prefix}_full_budget_path'] = ":".join(
-        st.session_state[f'{session_state_key_prefix}_category_path_elements']) if st.session_state[
-        f'{session_state_key_prefix}_category_path_elements'] else selected_scope_ui
+    st.session_state[f'{session_state_key_prefix}_full_budget_path'] = ":".join(selected_category_path_list_temp)
 
-    # Handle initial state for transfers or income if nothing selected
-    if is_transfer and not st.session_state[f'{session_state_key_prefix}_budget_scope']:
-        st.session_state[f'{session_state_key_prefix}_budget_scope'] = "Transfer"
-        st.session_state[f'{session_state_key_prefix}_category_path_elements'] = ["Transfer"]
-        st.session_state[f'{session_state_key_prefix}_full_budget_path'] = "Transfer"
-    elif st.session_state[f'{session_state_key_prefix}_budget_scope'] == "Income" and not st.session_state[
-        f'{session_state_key_prefix}_category_path_elements']:
-        # If Income scope is chosen but no specific category, set a default
-        st.session_state[f'{session_state_key_prefix}_category_path_elements'] = [
-            "Income:Uncategorized_Income"]  # Example placeholder
-        st.session_state[f'{session_state_key_prefix}_full_budget_path'] = "Income:Uncategorized_Income"
 
     st.markdown(
         f"**Selected Budget Path:** `{st.session_state[f'{session_state_key_prefix}_full_budget_path'] if st.session_state[f'{session_state_key_prefix}_full_budget_path'] else 'None'}`"
@@ -161,7 +150,7 @@ def _display_dynamic_category_selector_ui(
 # --- Main Display Function ---
 
 def display_manual_entry_tab(transaction_manager: TransactionManager, config_manager: FinanceConfigManager,
-                             app_config_manager: AppConfigManager):  # Added app_config_manager
+                             app_config_manager: AppConfigManager):
     """
     Displays the UI for manually entering a transaction with dynamic fields
     based on transaction type (Expense, Income, Transfer).
@@ -172,7 +161,6 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
     currency_symbol = config_manager.get_currency_symbol() if display_currency_symbol else ""
 
     account_options = _get_account_options(config_manager)
-    # Get the new recursive category structure for UI
     structured_categories = config_manager.get_all_categories_recursive()
 
     transaction_types = ["Expense", "Income", "Transfer"]
@@ -188,11 +176,8 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
         key="selected_transaction_type_radio"
     )
 
-    # --- Global Transaction Details (outside any form to preserve values) ---
-    st.markdown("---")
-    st.subheader("General Transaction Information")
-
-    # Initialize global transaction data in session state if not present
+    # --- Initialize/Reset Global Transaction Data ---
+    # This data is used by all transaction types unless overridden by specific sections (like Transfer)
     if 'global_transaction_data' not in st.session_state:
         st.session_state.global_transaction_data = {
             'date': datetime.date.today(),
@@ -201,92 +186,98 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
             'uploaded_file': None
         }
 
-    # Reset general transaction data if transaction type changes for Expense/Income/Transfer
+    # Reset general transaction data if transaction type changes
     if st.session_state.get('last_selected_transaction_type_general_reset') != selected_transaction_type:
+        # Preserve date, as it's common. Clear payee and account.
         st.session_state.global_transaction_data = {
-            'date': datetime.date.today(),
-            'payee': '',
-            'account': '',
+            'date': st.session_state.global_transaction_data['date'], # Keep the current date
+            'payee': '', # Reset payee
+            'account': '', # Reset account
             'uploaded_file': None
         }
         st.session_state['last_selected_transaction_type_general_reset'] = selected_transaction_type
-        # Also clear split data if exists for other types
+
+        # Clear split/transfer data
         for key in ['expense_splits', 'income_splits', 'transfer_data']:
             if key in st.session_state:
                 del st.session_state[key]
-        st.rerun()  # Rerun to apply resets
+        # Also clear all category selection states
+        for key in list(st.session_state.keys()):
+            if '_cat_ui' in key:
+                del st.session_state[key]
+        st.rerun() # Rerun to apply resets
 
-    st.session_state.global_transaction_data['date'] = st.date_input(
-        "Date",
-        st.session_state.global_transaction_data['date'],
-        key="general_date"
-    )
-
-    current_payee_value = st.session_state.global_transaction_data['payee']
-    initial_payee_idx = payee_options.index(current_payee_value) if current_payee_value in payee_options else 0
-
-    selected_payee = st.selectbox(
-        "Payer/Payee (Overall)",
-        payee_options,
-        index=initial_payee_idx,
-        placeholder="Type or select a payee (e.g., Supermarket, Monthly Salary)",
-        key="general_payee_selectbox",
-        # Custom logic needed to handle new options (add to payee_manager on save)
-        # accept_new_options=True # Removed this to manage new payee addition explicitly on form submission
-    )
-    st.session_state.global_transaction_data['payee'] = selected_payee
-
-    initial_account_display = f"{st.session_state.global_transaction_data['account']} ({_get_account_type_for_display(st.session_state.global_transaction_data['account'], config_manager)})" if \
-        st.session_state.global_transaction_data['account'] else None
-
-    # Find index for initial selection, handling cases where account_options might change
-    account_idx = next((i for i, opt in enumerate(account_options) if
-                        _get_account_name_from_display(opt) == st.session_state.global_transaction_data['account']), 0)
-
-    account_display = st.selectbox(
-        "Account (Overall)",
-        account_options,
-        index=account_idx,
-        placeholder="Choose the main account for this transaction...",
-        key="general_account"
-    )
-    st.session_state.global_transaction_data['account'] = _get_account_name_from_display(account_display)
-
+    # --- Overall File Uploader (Always visible) ---
     uploaded_file = st.file_uploader("Attach Invoice/Receipt (Optional)", type=['png', 'jpg', 'jpeg', 'pdf'],
                                      key="general_file_uploader")
 
+
+    # --- Transaction ID (Always visible) ---
     if 'current_transaction_id' not in st.session_state:
         st.session_state.current_transaction_id = f"TRN-{int(datetime.datetime.now().timestamp())}-{uuid.uuid4().hex[:6].upper()}"
 
-    # --- Dynamic UI based on Transaction Type (OUTSIDE THE SUBMISSION FORM) ---
+    # --- Dynamic UI based on Transaction Type ---
     if selected_transaction_type in ["Expense", "Income"]:
+        st.markdown("---")
+        st.subheader("General Transaction Information")
+
+        st.session_state.global_transaction_data['date'] = st.date_input(
+            "Date",
+            st.session_state.global_transaction_data['date'],
+            key="general_date"
+        )
+
+        # Payee Selection/Entry
+        selected_payee_from_list = st.selectbox(
+            "Select an existing Payer/Payee (Optional)",
+            payee_options,
+            index=0,  # Default to empty string
+            placeholder="Choose from recent payees...",
+            key="general_payee_list_selectbox"
+        )
+        st.info("If you select an existing payee, it will appear in the text input below. You can then edit or add a new payee directly in the text input. The **text input value** will be used for the transaction.")
+
+        # If an existing payee is selected from the list, pre-fill the text input
+        # only if the text input is currently empty or matches the previously selected list item.
+        # This prevents overwriting user's manual input if they start typing.
+        if selected_payee_from_list and selected_payee_from_list != st.session_state.global_transaction_data['payee']:
+            st.session_state.global_transaction_data['payee'] = selected_payee_from_list
+            st.rerun() # Rerun to update the text input
+
+        st.session_state.global_transaction_data['payee'] = st.text_input(
+            "Payer/Payee (Type a new one or confirm selection)",
+            value=st.session_state.global_transaction_data['payee'],
+            key="general_payee_text_input",
+            placeholder="Type payee name or select from above..."
+        )
+
+        # Account Selection
+        account_idx = next((i for i, opt in enumerate(account_options) if
+                            _get_account_name_from_display(opt) == st.session_state.global_transaction_data['account']), 0)
+        account_display = st.selectbox(
+            "Account (Overall)",
+            account_options,
+            index=account_idx,
+            placeholder="Choose the main account for this transaction...",
+            key="general_account"
+        )
+        st.session_state.global_transaction_data['account'] = _get_account_name_from_display(account_display)
+
+
         st.markdown("---")
         st.subheader(f"Splits for {selected_transaction_type}")
 
         split_key = f'{selected_transaction_type.lower()}_splits'
 
         # Initialize splits or reset if transaction type changed
-        if split_key not in st.session_state or \
-                st.session_state.get('last_selected_transaction_type_split_init') != selected_transaction_type:
+        if split_key not in st.session_state: # No need for 'last_selected_transaction_type_split_init' as it's handled above
             st.session_state[split_key] = [{
                 'amount': 0.0,
                 'description': '',
                 'notes': '',
                 'budget_scope': '', 'category': '', 'sub_category': '',
-                # category and sub_category are now parts of path
                 'full_budget_path': ''
             }]
-            st.session_state['last_selected_transaction_type_split_init'] = selected_transaction_type
-            # Clear all category selection state variables for each split to ensure a clean start
-            for i in range(len(st.session_state[split_key])):
-                prefix_to_clear = f"{selected_transaction_type}_split_{i}_cat_ui"
-                if f'{prefix_to_clear}_budget_scope' in st.session_state:
-                    del st.session_state[f'{prefix_to_clear}_budget_scope']
-                if f'{prefix_to_clear}_category_path_elements' in st.session_state:
-                    del st.session_state[f'{prefix_to_clear}_category_path_elements']
-                if f'{prefix_to_clear}_full_budget_path' in st.session_state:
-                    del st.session_state[f'{prefix_to_clear}_full_budget_path']
-            st.rerun()
 
         col_split_btns = st.columns([1, 1, 3])
         with col_split_btns[0]:
@@ -296,28 +287,20 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                     'budget_scope': '', 'category': '', 'sub_category': '',
                     'full_budget_path': ''
                 })
-                # No rerun here if we manage the keys correctly, but rerunning is simplest
                 st.rerun()
         with col_split_btns[1]:
             if len(st.session_state[split_key]) > 1:
                 if st.button("Remove Last Split", key=f"{selected_transaction_type}_remove_split_btn_outside"):
                     # Clear session state for the removed split's category UI to prevent conflicts
                     prefix_to_clear = f"{selected_transaction_type}_split_{len(st.session_state[split_key]) - 1}_cat_ui"
-                    if f'{prefix_to_clear}_budget_scope' in st.session_state:
-                        del st.session_state[f'{prefix_to_clear}_budget_scope']
-                    if f'{prefix_to_clear}_category_path_elements' in st.session_state:
-                        del st.session_state[f'{prefix_to_clear}_category_path_elements']
-                    if f'{prefix_to_clear}_full_budget_path' in st.session_state:
-                        del st.session_state[f'{prefix_to_clear}_full_budget_path']
+                    for k in list(st.session_state.keys()): # Iterate over a copy of keys
+                        if k.startswith(prefix_to_clear):
+                            del st.session_state[k]
 
                     st.session_state[split_key].pop()
                     st.rerun()
 
         total_amount_sum = 0.0
-        # Initialize or update a temporary list to hold current split values before form submission
-        # This is for internal use within this display function, not for session_state persistence of final values
-        # The actual split_data in st.session_state[split_key] is what gets updated directly.
-        # st.session_state[f'{selected_transaction_type.lower()}_current_split_values'] = []
 
         for i, split_data in enumerate(st.session_state[split_key]):
             st.markdown(f"**Split {i + 1}**")
@@ -351,30 +334,25 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
 
             # Determine scope options based on transaction type
             if selected_transaction_type == "Expense":
-                # Exclude 'Income' from expense scopes
                 scope_opts = [s for s in config_manager.get_all_budget_scopes() if s != 'Income']
             elif selected_transaction_type == "Income":
-                # Only 'Income' scope for income transactions
                 scope_opts = ['Income']
             else:
-                scope_opts = []  # Should not happen with Expense/Income check
+                scope_opts = []
 
             _display_dynamic_category_selector_ui(
                 structured_categories,
                 scope_opts,
                 session_state_key_prefix=f"{selected_transaction_type}_split_{i}_cat_ui",
-                is_transfer=False  # Not a transfer
             )
 
             # Update split_data with values from the category selector's session state
-            split_data['budget_scope'] = st.session_state[f"{selected_transaction_type}_split_{i}_cat_ui_budget_scope"]
+            # Ensure the session state key for full_budget_path is accessed safely
+            current_full_path = st.session_state.get(f"{selected_transaction_type}_split_{i}_cat_ui_full_budget_path", "")
+            split_data['full_budget_path'] = current_full_path
 
-            # Category and SubCategory are now derived from the full_budget_path
-            full_path_parts = st.session_state[f"{selected_transaction_type}_split_{i}_cat_ui_full_budget_path"].split(
-                ':')
-            split_data['full_budget_path'] = st.session_state[
-                f"{selected_transaction_type}_split_{i}_cat_ui_full_budget_path"]
-
+            full_path_parts = current_full_path.split(':')
+            split_data['budget_scope'] = full_path_parts[0] if len(full_path_parts) > 0 else ""
             split_data['category'] = full_path_parts[1] if len(full_path_parts) > 1 else ""
             split_data['sub_category'] = full_path_parts[2] if len(full_path_parts) > 2 else ""
 
@@ -400,17 +378,16 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                     st.error("Total amount of splits must be positive.")
                     is_valid = False
 
-                for i, split_data in enumerate(st.session_state[split_key]):  # Use the actual session state splits
+                for i, split_data in enumerate(st.session_state[split_key]):
                     if split_data['amount'] <= 0:
                         st.error(f"Split {i + 1}: Amount must be positive.")
                         is_valid = False
                     if not split_data['description']:
                         st.error(f"Split {i + 1}: Description is required.")
                         is_valid = False
-                    if not split_data['full_budget_path'] or split_data['full_budget_path'] == split_data[
-                        'budget_scope']:
-                        st.error(
-                            f"Split {i + 1}: A specific category must be selected. Only '{split_data['budget_scope']}' is not a full path.")
+                    # Check if full_budget_path is not just the scope
+                    if not split_data['full_budget_path'] or split_data['full_budget_path'].count(':') < 1 : # Ensure at least Scope:Category
+                        st.error(f"Split {i + 1}: A specific category path (e.g., Scope:Category) is required.")
                         is_valid = False
 
                     # Ensure income transactions are categorized under 'Income' scope
@@ -428,23 +405,19 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                     try:
                         splits_for_manager = []
                         for split_data in st.session_state[split_key]:
-                            # Ensure the full_budget_path is passed correctly
                             splits_for_manager.append({
                                 'amount': split_data['amount'],
                                 'description': split_data['description'],
                                 'notes': split_data['notes'],
                                 'payee': st.session_state.global_transaction_data['payee'],
-                                # Each split defaults to overall payee
                                 'account': st.session_state.global_transaction_data['account'],
-                                # Each split defaults to overall account
                                 'budget_scope': split_data['budget_scope'],
                                 'category': split_data['category'],
                                 'sub_category': split_data['sub_category'],
                                 'full_budget_path': split_data['full_budget_path']
                             })
 
-                        # Manual metadata (currently only for invoice processing, but can be passed for general manual entry if UI expanded)
-                        manual_metadata_entries = []
+                        manual_metadata_entries = [] # Placeholder
 
                         transaction_manager.add_manual_transaction(
                             transaction_id=st.session_state.current_transaction_id,
@@ -468,26 +441,13 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                         st.session_state.global_transaction_data = {
                             'date': datetime.date.today(), 'payee': '', 'account': '', 'uploaded_file': None
                         }
-                        # Clear specific category selector session state for all splits
-                        for i in range(
-                                len(st.session_state[split_key])):  # Loop through number of splits that *were* there
-                            prefix_to_clear = f"{selected_transaction_type}_split_{i}_cat_ui"
-                            if f'{prefix_to_clear}_budget_scope' in st.session_state:
-                                del st.session_state[f'{prefix_to_clear}_budget_scope']
-                                del st.session_state[f'{prefix_to_clear}_category_path_elements']
-                                del st.session_state[f'{prefix_to_clear}_full_budget_path']
+                        # Clear all category selection state variables
+                        for key in list(st.session_state.keys()):
+                            if '_cat_ui' in key:
+                                del st.session_state[key]
 
-                        # Clear transfer specific state if it exists
-                        if 'transfer_data' in st.session_state:
-                            del st.session_state['transfer_data']
-                        if 'transfer_cat_ui_budget_scope' in st.session_state:  # Clear transfer category UI state
-                            del st.session_state['transfer_cat_ui_budget_scope']
-                            del st.session_state['transfer_cat_ui_category_path_elements']
-                            del st.session_state['transfer_cat_ui_full_budget_path']
-
-                        # Generate new transaction ID
                         st.session_state.current_transaction_id = f"TRN-{int(datetime.datetime.now().timestamp())}-{uuid.uuid4().hex[:6].upper()}"
-                        st.rerun()  # Rerun to clear the form and show success message
+                        st.rerun()
 
                     except Exception as e:
                         st.error(f"Failed to save {selected_transaction_type} transaction: {e}")
@@ -496,26 +456,37 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
         st.markdown("---")
         st.subheader("Transfer Details")
 
-        if 'transfer_data' not in st.session_state or st.session_state.get(
-                'last_selected_transaction_type_split_init') != selected_transaction_type:
+        if 'transfer_data' not in st.session_state:
             st.session_state.transfer_data = {
+                'date': datetime.date.today(),
                 'amount': 0.0,
                 'source_account': '',
                 'destination_account': '',
                 'description': '',
                 'notes': '',
-                'budget_scope': 'Transfer',  # Default for transfers
-                'category': 'Transfer',  # Default for transfers
+                'budget_scope': '',
+                'category': '',
                 'sub_category': '',
-                'full_budget_path': 'Transfer:Transfer'  # Default for transfers
+                'full_budget_path': ''
             }
-            st.session_state['last_selected_transaction_type_split_init'] = selected_transaction_type
-            # Clear category selector state for transfer
-            if 'transfer_cat_ui_budget_scope' in st.session_state:
-                del st.session_state['transfer_cat_ui_budget_scope']
-                del st.session_state['transfer_cat_ui_category_path_elements']
-                del st.session_state['transfer_cat_ui_full_budget_path']
-            st.rerun()  # Rerun to apply resets
+            # Initialize transfer category UI session state with a default if 'Transfer' scope exists
+            # This ensures a default path like 'Transfer:Transfer' is pre-selected if available
+            if 'Transfer' in structured_categories:
+                st.session_state['transfer_cat_ui_budget_scope'] = "Transfer"
+                st.session_state['transfer_cat_ui_category_path_elements'] = ["Transfer", "Transfer"] # Default to Transfer:Transfer
+                st.session_state['transfer_cat_ui_full_budget_path'] = "Transfer:Transfer"
+            else: # Fallback if 'Transfer' scope is not defined in financial_config
+                 st.session_state['transfer_cat_ui_budget_scope'] = ""
+                 st.session_state['transfer_cat_ui_category_path_elements'] = []
+                 st.session_state['transfer_cat_ui_full_budget_path'] = ""
+
+            st.rerun()
+
+        st.session_state.transfer_data['date'] = st.date_input(
+            "Date",
+            st.session_state.transfer_data['date'],
+            key="transfer_date_input"
+        )
 
         col1, col2 = st.columns(2)
         with col1:
@@ -527,14 +498,10 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                 key="transfer_amount_outside"
             )
 
-            initial_source_acc_display = f"{st.session_state.transfer_data['source_account']} ({_get_account_type_for_display(st.session_state.transfer_data['source_account'], config_manager)})" if \
-                st.session_state.transfer_data['source_account'] else None
-
-            # Find index for initial selection
+            # Source Account Selector
             source_acc_idx = next((i for i, opt in enumerate(account_options) if
                                    _get_account_name_from_display(opt) == st.session_state.transfer_data[
                                        'source_account']), 0)
-
             source_account_display = st.selectbox(
                 "From Account",
                 account_options,
@@ -552,39 +519,10 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
             )
 
         with col2:
-            # For transfers, we usually have a "Transfer" category and don't need the full budget tree.
-            # However, if you want to allow transfers to be categorized within the budget (e.g., as 'Savings Contribution'),
-            # you would offer the full scope options. For a strict 'Transfer' type, we can simplify.
-
-            # If "Transfer" is a top-level scope in your financial_config.yaml, this will work.
-            # Otherwise, you might need to hardcode it or adjust FinanceConfigManager.
-            # For now, assuming "Transfer" is a distinct 'scope' from a conceptual perspective.
-            transfer_scope_opts = ['Transfer']  # Force 'Transfer' as the only scope for transfers
-
-            _display_dynamic_category_selector_ui(
-                # Pass a simplified structured_categories for "Transfer" if needed,
-                # or just let it select 'Transfer:Transfer'
-                {"Transfer": {"Transfer": {}}},  # A mock structure just for this selector to work
-                transfer_scope_opts,
-                session_state_key_prefix="transfer_cat_ui",
-                is_transfer=True
-            )
-            # Override budget path for transfers if the selector changes it to something else unintended
-            st.session_state.transfer_data['budget_scope'] = st.session_state["transfer_cat_ui_budget_scope"]
-
-            full_path_parts = st.session_state["transfer_cat_ui_full_budget_path"].split(':')
-            st.session_state.transfer_data['full_budget_path'] = st.session_state["transfer_cat_ui_full_budget_path"]
-
-            st.session_state.transfer_data['category'] = full_path_parts[1] if len(full_path_parts) > 1 else ""
-            st.session_state.transfer_data['sub_category'] = full_path_parts[2] if len(full_path_parts) > 2 else ""
-
-            initial_dest_acc_display = f"{st.session_state.transfer_data['destination_account']} ({_get_account_type_for_display(st.session_state.transfer_data['destination_account'], config_manager)})" if \
-                st.session_state.transfer_data['destination_account'] else None
-
+            # Destination Account Selector
             dest_acc_idx = next((i for i, opt in enumerate(account_options) if
                                  _get_account_name_from_display(opt) == st.session_state.transfer_data[
                                      'destination_account']), 0)
-
             destination_account_display = st.selectbox(
                 "To Account",
                 account_options,
@@ -602,6 +540,24 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                 placeholder="Any additional notes about this transfer."
             )
 
+            st.write("Category for this transfer:")
+            # Use full structured_categories for transfers
+            # Allow selection from all available scopes, user can choose 'Transfer' or another relevant category
+            _display_dynamic_category_selector_ui(
+                structured_categories,
+                config_manager.get_all_budget_scopes(), # Pass all top-level scopes
+                session_state_key_prefix="transfer_cat_ui",
+            )
+            # Update transfer_data with values from the category selector's session state
+            current_full_path_transfer = st.session_state.get("transfer_cat_ui_full_budget_path", "")
+            st.session_state.transfer_data['full_budget_path'] = current_full_path_transfer
+
+            full_path_parts_transfer = current_full_path_transfer.split(':')
+            st.session_state.transfer_data['budget_scope'] = full_path_parts_transfer[0] if len(full_path_parts_transfer) > 0 else ""
+            st.session_state.transfer_data['category'] = full_path_parts_transfer[1] if len(full_path_parts_transfer) > 1 else ""
+            st.session_state.transfer_data['sub_category'] = full_path_parts_transfer[2] if len(full_path_parts_transfer) > 2 else ""
+
+
         with st.form(key="transfer_submission_form"):
             st.write("Click 'Save Transfer' to finalize your entry.")
             submitted = st.form_submit_button("Save Transfer")
@@ -612,8 +568,11 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                 destination_account_name = st.session_state.transfer_data['destination_account']
                 description = st.session_state.transfer_data['description']
                 notes = st.session_state.transfer_data['notes']
-                # The payee for a transfer is typically a pseudo-payee like 'Transfer' or the destination account
-                transfer_payee = f"Transfer to {destination_account_name}" if destination_account_name else "Transfer"
+                # The payee for a transfer can be set to the overall payee or a default
+                transfer_payee = st.session_state.global_transaction_data['payee']
+                if not transfer_payee: # If overall payee was not entered for transfer, use a generic one
+                    transfer_payee = f"Transfer to {destination_account_name}" if destination_account_name else "Transfer"
+
 
                 is_valid = True
                 if amount <= 0 or not source_account_name or not destination_account_name:
@@ -622,9 +581,12 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                 elif source_account_name == destination_account_name:
                     st.error("Source and Destination accounts cannot be the same for Transfer.")
                     is_valid = False
-                elif not st.session_state.transfer_data['full_budget_path']:
-                    st.error("A budget path (e.g., 'Transfer:Transfer') is required for transfers.")
+                # Validate the selected transfer path
+                elif not st.session_state.transfer_data['full_budget_path'] or \
+                     st.session_state.transfer_data['full_budget_path'].count(':') < 1 : # Ensure at least Scope:Category
+                    st.error("A valid budget path (e.g., 'Transfer:Transfer' or 'Personal:Savings') is required for transfers.")
                     is_valid = False
+
 
                 if is_valid:
                     try:
@@ -660,35 +622,33 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                         transaction_manager.add_manual_transaction(
                             transaction_id=related_transaction_id_for_transfer,
                             transaction_type="Transfer",
-                            date=st.session_state.global_transaction_data['date'],
-                            payee=transfer_payee,  # Overall payee for the transfer
-                            account=source_account_name,  # The main account (source) for the overall transaction
-                            uploaded_file=uploaded_file,  # Attach file if any
+                            date=st.session_state.transfer_data['date'],
+                            payee=transfer_payee,
+                            account=source_account_name,
+                            uploaded_file=uploaded_file,
                             splits=transfer_splits,
-                            manual_metadata=[]  # No specific metadata for transfers typically
+                            manual_metadata=[]
                         )
                         st.success(
                             f"Transfer transaction saved successfully with ID: **{related_transaction_id_for_transfer}**")
 
                         # Reset form fields and session state after successful submission
                         st.session_state.transfer_data = {
-                            'amount': 0.0, 'source_account': '', 'destination_account': '',
+                            'date': datetime.date.today(), 'amount': 0.0, 'source_account': '', 'destination_account': '',
                             'description': '', 'notes': '',
-                            'budget_scope': 'Transfer', 'category': 'Transfer', 'sub_category': '',
-                            'full_budget_path': 'Transfer:Transfer'
+                            'budget_scope': '', 'category': '', 'sub_category': '',
+                            'full_budget_path': ''
                         }
                         st.session_state.global_transaction_data = {
                             'date': datetime.date.today(), 'payee': '', 'account': '', 'uploaded_file': None
                         }
                         # Clear category selector state for transfer
-                        if 'transfer_cat_ui_budget_scope' in st.session_state:
-                            del st.session_state['transfer_cat_ui_budget_scope']
-                            del st.session_state['transfer_cat_ui_category_path_elements']
-                            del st.session_state['transfer_cat_ui_full_budget_path']
+                        for key in list(st.session_state.keys()):
+                            if 'transfer_cat_ui' in key:
+                                del st.session_state[key]
 
                         st.session_state.current_transaction_id = f"TRN-{int(datetime.datetime.now().timestamp())}-{uuid.uuid4().hex[:6].upper()}"
                         st.rerun()
 
                     except Exception as e:
                         st.error(f"Failed to save Transfer transaction: {e}")
-
