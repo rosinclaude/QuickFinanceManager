@@ -1,0 +1,55 @@
+# configs/app_config.yaml
+
+# Configuration for various file paths used by different managers
+paths:
+  # Paths relevant to financial configuration files
+  default_config_dir: 'configs/defaults/'
+  monthly_config_dir: 'configs/monthly/'
+  default_finance_config_file: 'financial_config_default.yaml'
+  # Path for vendor patterns configuration
+  vendor_patterns_file: 'configs/vendor_patterns.yaml'
+  # Paths for primary CSV data storage
+  transactions_csv_file: 'data/transactions.csv'
+  payees_csv_file: 'data/payees.csv'
+  metadata_csv_file: 'data/metadata.csv'
+  # Directories for ML models and invoice processing
+  models_dir: 'models/'
+  invoice_input_dir: 'data/invoices/input/'     # Raw uploaded invoices/receipts
+  invoice_processed_dir: 'data/invoices/processed/' # Successfully processed invoices
+  invoice_failed_dir: 'data/invoices/failed/'   # Invoices that failed processing
+
+# LLM Configuration for categorization and vendor matching
+llm_config:
+  vendor_fuzzy_match_model: 'all-MiniLM-L6-v2'        # Model for semantic similarity (e.g., SentenceTransformer)
+  vendor_fuzzy_match_threshold: 0.85                  # Similarity threshold (0.0 to 1.0)
+  categorization_llm_model: 'dummy-llm'               # Placeholder for actual LLM (e.g., 'gemini-pro', 'gpt-3.5-turbo')
+  categorization_llm_api_key_env_var: 'GEMINI_API_KEY' # Environment variable name for API key
+  categorization_llm_temperature: 0.1                 # Controls randomness in LLM output (0.0 to 1.0)
+  categorization_llm_max_tokens: 50                   # Maximum tokens for LLM response
+  categorization_llm_few_shot_examples_count: 5       # Number of few-shot examples to include in LLM prompt
+
+# ML Model Configuration for categorization and payee recognition
+ml_config:
+  categorizer_model_path: 'models/category_model/model.joblib' # Path to trained categorization model
+  categorizer_vectorizer_path: 'models/category_model/vectorizer.joblib' # Path to TF-IDF vectorizer for categorizer
+  categorizer_label_encoder_path: 'models/category_model/label_encoder.joblib' # Path to label encoder for categorizer
+  categorizer_confidence_threshold: 0.7              # Confidence threshold for ML categorization (0.0 to 1.0)
+  payee_recognizer_model_path: 'models/payee_model/model.joblib' # Path to trained payee recognition model
+  payee_recognizer_vectorizer_path: 'models/payee_model/vectorizer.joblib' # Path to TF-IDF vectorizer for payee
+  payee_recognizer_label_encoder_path: 'models/payee_model/label_encoder.joblib' # Path to label encoder for payee
+
+# OCR Processor Configuration
+ocr_config:
+  languages: ['en', 'fr'] # Languages for OCR processing
+  use_gpu: True          # Set to True if GPU acceleration for OCR is available (e.g., CUDA for EasyOCR)
+
+# Application-specific settings
+app_settings:
+  display_currency_symbol_on_amount: True # Whether to show currency symbol next to amounts in UI
+  default_transaction_account: 'Cash'     # Default account to pre-fill in manual entry forms
+
+# ML Operations settings for model training suggestions
+ml_ops_settings:
+  newly_verified_transactions_for_finetune_count: 0 # Counter for manually verified transactions from invoices
+  ml_finetune_suggestion_threshold: 20              # Threshold to suggest ML model fine-tuning
+  ml_finetune_last_suggested_count: 0               # The count at which fine-tuning was last suggested
