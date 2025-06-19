@@ -1,0 +1,39 @@
+# configs/vendor_patterns.yaml
+# Define patterns to identify vendors and optionally map them to custom parser modules.
+
+vendors:
+  - name: "MAXI"
+    patterns:
+      - "MAXI"
+      - "GROUPE PROVIGO"
+    custom_parser_module: null # No specific parser for MAXI, use generic
+  - name: "COSTCO"
+    patterns:
+      - "COSTCO WHOLESALE"
+      - "COSTCO"
+      - "WHOLESALE CORP"
+    custom_parser_module: "costco_parser" # This will map to modules/automation/vendor_parsers/costco_parser.py
+  - name: "SAQ"
+    patterns:
+      - "SAQ"
+      - "SOCIETE DES ALCOOLS DU QUEBEC"
+    custom_parser_module: null
+  - name: "WALMART"
+    patterns:
+      - "WAL-MART"
+      - "WALMART"
+    custom_parser_module: null
+  - name: "IGA"
+    patterns:
+      - "IGA ST-HUBERT"
+      - "IGA"
+    custom_parser_module: null
+  - name: "LOBLAW"
+    patterns:
+      - "LOBLAW"
+    custom_parser_module: null
+  - name: "RENO-DEPOT"
+    patterns:
+      - "RENO-DEPOT"
+    custom_parser_module: null
+  # Add more vendors as you identify them
