@@ -47,12 +47,13 @@ class TransactionManager:
         self.input_processed_dir = self.app_config['paths']['invoice_processed_dir']
         self.input_failed_dir = self.app_config['paths']['invoice_failed_dir']
 
-        # VendorConfigManager initialization, passing relevant app_config parts
+        # VendorConfigManager initialization, passing relevant app_config parts including new ambiguity threshold
         llm_config = self.app_config.get('llm_config', {})
         self.vendor_config_manager = VendorConfigManager(
             vendor_patterns_file=self.app_config['paths']['vendor_patterns_file'],
             llm_model_name=llm_config.get('vendor_fuzzy_match_model', 'all-MiniLM-L6-v2'),
-            llm_similarity_threshold=llm_config.get('vendor_fuzzy_match_threshold', 0.85)
+            llm_similarity_threshold=llm_config.get('vendor_fuzzy_match_threshold', 0.85),
+            llm_ambiguity_threshold=llm_config.get('vendor_fuzzy_match_ambiguity_threshold', 0.65) # NEW
         )
 
         # OCRProcessor initialization, passing relevant app_config parts
@@ -104,7 +105,7 @@ class TransactionManager:
                                transaction_id: str,
                                transaction_type: str,
                                date: datetime.date,
-                               payee: str,
+                               payee: str, # This payee is now assumed to be the final, conformed name
                                account: str,
                                uploaded_file=None,
                                splits: list = None,
@@ -114,6 +115,8 @@ class TransactionManager:
         """
         Creates, validates, and saves one or more split transactions.
         Integrates with PayeeManager and MetadataManager.
+        The 'payee' argument is expected to be the final, conformed name,
+        determined by the UI's interaction with VendorConfigManager.
         """
         if splits is None or not splits:
             raise ValueError("Transactions must have at least one split defined.")
@@ -136,15 +139,10 @@ class TransactionManager:
             transactions_to_add = []
             currency = self.config_manager.get_currency()
 
-            # Add the main payee to the payee manager (before conformity check for new raw payees)
-            # This is now handled by vendor_config_manager for conformity, then payee_manager adds the conform payee
-            # if payee:
-            #     self.payee_manager.add_payee(payee) # Old logic
-
-            # Get conform payee for the main payee (if any)
-            conform_payee = self.vendor_config_manager.get_conform_vendor_name(payee)
-            if conform_payee:  # Add the conform payee to the payee manager
-                self.payee_manager.add_payee(conform_payee)
+            # The 'payee' received here is already the conformed/user-confirmed name from the UI.
+            # Just ensure it exists in the payee database.
+            if payee:
+                self.payee_manager.add_payee(payee) # Add this confirmed payee to the database
 
             transaction_metadata_entries = []
             if manual_metadata:
@@ -161,11 +159,12 @@ class TransactionManager:
                 split_sub_category = split.get('sub_category', '')
                 split_full_budget_path = split.get('full_budget_path', '')
 
-                # Effective payee for the split might be different from transaction payee
-                effective_payee = split.get('payee', conform_payee)  # Use conform_payee as default for split
+                # Effective payee for the split is also expected to be conformed.
+                # It can default to the overall transaction payee if not specified in the split data.
+                effective_payee = split.get('payee', payee)
                 if effective_payee:
-                    # Ensure split payee is also conformed and added to payee DB
-                    effective_payee = self.vendor_config_manager.get_conform_vendor_name(effective_payee)
+                    # Ensure this effective_payee for the split is also added to the payee DB.
+                    # No fuzzy matching here, as this is the result of UI conformation.
                     self.payee_manager.add_payee(effective_payee)
 
                 effective_account = split.get('account', account)
@@ -175,7 +174,7 @@ class TransactionManager:
                     category_suggestions = self.hybrid_categorizer.suggest_category(
                         description=split_description,
                         current_notes=split_notes,
-                        payee=effective_payee,
+                        payee=effective_payee, # Use the conformed/effective payee
                         account=effective_account,
                         transaction_type=transaction_type  # Pass transaction type
                     )
@@ -269,10 +268,15 @@ class TransactionManager:
 
             ocr_text = self.ocr_processor.process_image(temp_file_path)
 
+            # Get the suggestion result for the payee from InvoiceParser
+            # InvoiceParser will use vendor_config_manager.suggest_conformed_payee
+            # and return the best suggestion. The UI will then verify this suggestion.
             parsed_invoice_data = self.invoice_parser.parse_invoice_text(ocr_text)
 
+            # The payee from parsed_invoice_data is already the conformed name
             conform_payee = parsed_invoice_data['payee']
             if conform_payee:
+                # Ensure this conformed payee is in the payee database
                 self.payee_manager.add_payee(conform_payee)
 
             # Determine main transaction type (usually Expense for invoices, but can be customized)
@@ -283,7 +287,7 @@ class TransactionManager:
                 categorization = self.hybrid_categorizer.suggest_category(
                     description=split['description'],
                     current_notes=parsed_invoice_data['notes'],
-                    payee=conform_payee,
+                    payee=conform_payee, # Use the conformed payee from invoice parsing
                     account=parsed_invoice_data['account'],
                     transaction_type=main_transaction_type
                 )
