@@ -4,12 +4,14 @@ import streamlit as st
 import datetime
 import uuid
 from typing import Dict, List, Any, Optional
+import pandas as pd
 
 from modules.managers.transaction_manager import TransactionManager
 from modules.managers.finance_config_manager import FinanceConfigManager
 from modules.managers.payee_manager import PayeeManager
 from modules.managers.app_config_manager import AppConfigManager
-from modules.managers.metadata_manager import MetadataManager  # Import MetadataManager for getting existing keys
+from modules.managers.csv_manager import CSVManager
+from modules.managers.metadata_manager import MetadataManager
 
 
 # --- Helper Functions for UI Reusability ---
@@ -83,8 +85,8 @@ def _display_dynamic_category_selector_ui(
 
     current_level_dict = structured_categories.get(selected_scope_ui, {})
 
-    selected_category_path_list_temp = [
-        selected_scope_ui] if selected_scope_ui else []  # Start with scope for path elements
+    # Start with scope for path elements. This will be built up as user selects deeper categories.
+    selected_category_path_list_temp = [selected_scope_ui] if selected_scope_ui else []
 
     level_num = 1
     # Loop to dynamically create selectboxes for nested categories
@@ -94,7 +96,7 @@ def _display_dynamic_category_selector_ui(
 
             # Determine the value to pre-select for this level
             prev_level_val = ""
-            # current_path_elements will now include the scope as the first element if selected
+            # current_path_elements now includes the scope as the first element if selected
             # So, current_path_elements[level_num] corresponds to category level `level_num`
             if len(current_path_elements) > level_num:  # > to account for scope being at index 0
                 prev_level_val = current_path_elements[level_num]
@@ -115,8 +117,9 @@ def _display_dynamic_category_selector_ui(
                                 selected_category_at_level != current_path_elements[level_num])
 
             if is_level_changed:
-                # Update current_path_elements up to this level
-                new_path_elements = selected_category_path_list_temp[:level_num]  # Truncate to current level
+                # Construct new_path_elements from the beginning up to the current level.
+                # Take the path elements BEFORE the current level's original selection from current_path_elements.
+                new_path_elements = current_path_elements[:level_num]
                 if selected_category_at_level:
                     new_path_elements.append(selected_category_at_level)
 
@@ -126,6 +129,9 @@ def _display_dynamic_category_selector_ui(
                 if selected_category_at_level:  # Only rerun if a selection was made (not cleared)
                     st.rerun()
                 else:  # User cleared selection at this level
+                    # If cleared, the path elements should be truncated at the previous level
+                    st.session_state[f'{session_state_key_prefix}_category_path_elements'] = new_path_elements
+                    st.session_state[f'{session_state_key_prefix}_full_budget_path'] = ":".join(new_path_elements)
                     break  # Stop going deeper
 
             if selected_category_at_level:
@@ -133,7 +139,7 @@ def _display_dynamic_category_selector_ui(
                 # Prepare for next iteration: move to the sub-dictionary
                 current_level_dict = current_level_dict.get(selected_category_at_level, {})
                 level_num += 1
-            else:  # No selection at this level
+            else:  # No selection at this level, or current level is not a dictionary (e.g., it's a leaf node {})
                 break  # Stop iterating, no more categories to select
         else:  # Current level is not a dictionary (e.g., it's a leaf node {}) or it's an empty dictionary
             break
@@ -148,11 +154,15 @@ def _display_dynamic_category_selector_ui(
     )
 
 
+# --- Caching the metadata keys loading directly from CSV path or via manager ---
 @st.cache_data
 def _get_all_unique_metadata_keys(_metadata_manager: MetadataManager) -> List[str]:
     """
-    Retrieves all unique metadata keys from the metadata.csv file.
+    Retrieves all unique metadata keys from the metadata.csv file via the MetadataManager.
     This function is cached to avoid re-reading the CSV on every rerun.
+    It takes the MetadataManager instance, but its internal hashability
+    depends on Streamlit's ability to hash the manager or the manager's
+    dependency on the underlying file being monitored by Streamlit.
     """
     try:
         metadata_keys = _metadata_manager.get_all_unique_metadata_keys()
@@ -185,6 +195,8 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
     existing_payee_names = transaction_manager.payee_manager.get_all_payee_names()
     payee_options = [''] + sorted(existing_payee_names)  # Sort for better UX
 
+    # --- Call the cached function using the metadata manager instance ---
+    # The caching is now tied to the _metadata_manager object.
     all_unique_metadata_keys = _get_all_unique_metadata_keys(transaction_manager.metadata_manager)
 
     # --- Step 1: Select Transaction Type (outside any form for immediate reactivity) ---
@@ -259,8 +271,7 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
             placeholder="Choose from recent payees...",
             key="general_payee_list_selectbox"
         )
-        st.info(
-            "If you select an existing payee, it will appear in the text input below. You can then edit or add a new payee directly in the text input. The **text input value** will be used for the transaction.")
+        st.info("If you select an existing payee, it will appear in the text input below. You can then edit or add a new payee directly in the text input. The **text input value** will be used for the transaction.")
 
         # If an existing payee is selected from the list, pre-fill the text input
         # only if the text input is currently empty or matches the previously selected list item.
@@ -278,8 +289,7 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
 
         # Account Selection
         account_idx = next((i for i, opt in enumerate(account_options) if
-                            _get_account_name_from_display(opt) == st.session_state.global_transaction_data['account']),
-                           0)
+                            _get_account_name_from_display(opt) == st.session_state.global_transaction_data['account']), 0)
         account_display = st.selectbox(
             "Account (Overall)",
             account_options,
@@ -295,7 +305,7 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
         split_key = f'{selected_transaction_type.lower()}_splits'
 
         # Initialize splits or reset if transaction type changed
-        if split_key not in st.session_state:  # No need for 'last_selected_transaction_type_split_init' as it's handled above
+        if split_key not in st.session_state:
             st.session_state[split_key] = [{
                 'amount': 0.0,
                 'description': '',
@@ -373,8 +383,7 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
 
             # Update split_data with values from the category selector's session state
             # Ensure the session state key for full_budget_path is accessed safely
-            current_full_path = st.session_state.get(f"{selected_transaction_type}_split_{i}_cat_ui_full_budget_path",
-                                                     "")
+            current_full_path = st.session_state.get(f"{selected_transaction_type}_split_{i}_cat_ui_full_budget_path", "")
             split_data['full_budget_path'] = current_full_path
 
             full_path_parts = current_full_path.split(':')
@@ -413,8 +422,8 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                     selected_key_from_list = st.selectbox(
                         "Metadata Key (Select existing)",
                         all_unique_metadata_keys,
-                        index=all_unique_metadata_keys.index(meta_entry['_selected_from_list_key']) if meta_entry[
-                                                                                                           '_selected_from_list_key'] in all_unique_metadata_keys else 0,
+                        index=all_unique_metadata_keys.index(
+                            meta_entry['_selected_from_list_key']) if meta_entry['_selected_from_list_key'] in all_unique_metadata_keys else 0,
                         placeholder="Choose from existing keys...",
                         key=f"{selected_transaction_type}_meta_key_selectbox_{i}"
                     )
@@ -471,8 +480,7 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                     if key and value:  # Only add if both key and value are non-empty
                         cleaned_metadata.append({'key': key, 'value': value})
                     elif key or value:  # If one is present but not the other
-                        st.warning(
-                            f"Metadata field found with only a key or a value (Key: '{key}', Value: '{value}'). Ignoring incomplete entry.")
+                        st.warning(f"Metadata field found with only a key or a value (Key: '{key}', Value: '{value}'). Ignoring incomplete entry.")
 
                 # Assign cleaned metadata back to session state to reflect what will be saved
                 st.session_state.global_transaction_data['manual_metadata'] = cleaned_metadata
@@ -485,8 +493,7 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                         st.error(f"Split {i + 1}: Description is required.")
                         is_valid = False
                     # Check if full_budget_path is not just the scope
-                    if not split_data['full_budget_path'] or split_data['full_budget_path'].count(
-                            ':') < 1:  # Ensure at least Scope:Category
+                    if not split_data['full_budget_path'] or split_data['full_budget_path'].count(':') < 1:  # Ensure at least Scope:Category
                         st.error(f"Split {i + 1}: A specific category path (e.g., Scope:Category) is required.")
                         is_valid = False
 
@@ -527,7 +534,6 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                             uploaded_file=uploaded_file,
                             splits=splits_for_manager,
                             manual_metadata=st.session_state.global_transaction_data['manual_metadata']
-                            # Pass the validated list
                         )
                         st.success(
                             f"{selected_transaction_type} transaction saved successfully with ID: **{st.session_state.current_transaction_id}**")
@@ -577,8 +583,7 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
             # This ensures a default path like 'Transfer:Transfer' is pre-selected if available
             if 'Transfer' in structured_categories:
                 st.session_state['transfer_cat_ui_budget_scope'] = "Transfer"
-                st.session_state['transfer_cat_ui_category_path_elements'] = ["Transfer",
-                                                                              "Transfer"]  # Default to Transfer:Transfer
+                st.session_state['transfer_cat_ui_category_path_elements'] = ["Transfer", "Transfer"]  # Default to Transfer:Transfer
                 st.session_state['transfer_cat_ui_full_budget_path'] = "Transfer:Transfer"
             else:  # Fallback if 'Transfer' scope is not defined in financial_config
                 st.session_state['transfer_cat_ui_budget_scope'] = ""
@@ -658,12 +663,9 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
             st.session_state.transfer_data['full_budget_path'] = current_full_path_transfer
 
             full_path_parts_transfer = current_full_path_transfer.split(':')
-            st.session_state.transfer_data['budget_scope'] = full_path_parts_transfer[0] if len(
-                full_path_parts_transfer) > 0 else ""
-            st.session_state.transfer_data['category'] = full_path_parts_transfer[1] if len(
-                full_path_parts_transfer) > 1 else ""
-            st.session_state.transfer_data['sub_category'] = full_path_parts_transfer[2] if len(
-                full_path_parts_transfer) > 2 else ""
+            st.session_state.transfer_data['budget_scope'] = full_path_parts_transfer[0] if len(full_path_parts_transfer) > 0 else ""
+            st.session_state.transfer_data['category'] = full_path_parts_transfer[1] if len(full_path_parts_transfer) > 1 else ""
+            st.session_state.transfer_data['sub_category'] = full_path_parts_transfer[2] if len(full_path_parts_transfer) > 2 else ""
 
         # --- Additional Metadata Section for Transfers ---
         # Initialize manual_metadata_entries if not present, including a placeholder for selected key
@@ -690,8 +692,8 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                     selected_key_from_list = st.selectbox(
                         "Metadata Key (Select existing)",
                         all_unique_metadata_keys,
-                        index=all_unique_metadata_keys.index(meta_entry['_selected_from_list_key']) if meta_entry[
-                                                                                                           '_selected_from_list_key'] in all_unique_metadata_keys else 0,
+                        index=all_unique_metadata_keys.index(
+                            meta_entry['_selected_from_list_key']) if meta_entry['_selected_from_list_key'] in all_unique_metadata_keys else 0,
                         placeholder="Choose from existing keys...",
                         key=f"transfer_meta_key_selectbox_{i}"
                     )
@@ -745,10 +747,8 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                     is_valid = False
                 # Validate the selected transfer path
                 elif not st.session_state.transfer_data['full_budget_path'] or \
-                        st.session_state.transfer_data['full_budget_path'].count(
-                            ':') < 1:  # Ensure at least Scope:Category
-                    st.error(
-                        "A valid budget path (e.g., 'Transfer:Transfer' or 'Personal:Savings') is required for transfers.")
+                        st.session_state.transfer_data['full_budget_path'].count(':') < 1:  # Ensure at least Scope:Category
+                    st.error("A valid budget path (e.g., 'Transfer:Transfer' or 'Personal:Savings') is required for transfers.")
                     is_valid = False
 
                 # Validate metadata entries
@@ -759,8 +759,7 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                     if key and value:  # Only add if both key and value are non-empty
                         cleaned_metadata.append({'key': key, 'value': value})
                     elif key or value:  # If one is present but not the other
-                        st.warning(
-                            f"Metadata field found with only a key or a value (Key: '{key}', Value: '{value}'). Ignoring incomplete entry.")
+                        st.warning(f"Metadata field found with only a key or a value (Key: '{key}', Value: '{value}'). Ignoring incomplete entry.")
 
                 # Assign cleaned metadata back to session state to reflect what will be saved
                 st.session_state.global_transaction_data['manual_metadata'] = cleaned_metadata
@@ -805,15 +804,13 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                             uploaded_file=uploaded_file,
                             splits=transfer_splits,
                             manual_metadata=st.session_state.global_transaction_data['manual_metadata']
-                            # Pass the validated list
                         )
                         st.success(
                             f"Transfer transaction saved successfully with ID: **{related_transaction_id_for_transfer}**")
 
                         # Reset form fields and session state after successful submission
                         st.session_state.transfer_data = {
-                            'date': datetime.date.today(), 'amount': 0.0, 'source_account': '',
-                            'destination_account': '',
+                            'date': datetime.date.today(), 'amount': 0.0, 'source_account': '', 'destination_account': '',
                             'description': '', 'notes': '',
                             'budget_scope': '', 'category': '', 'sub_category': '',
                             'full_budget_path': ''
