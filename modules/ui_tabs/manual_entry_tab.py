@@ -1,14 +1,15 @@
 # modules/ui_tabs/manual_entry_tab.py
 
+import streamlit as st
 import datetime
 import uuid
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 
-import streamlit as st
-
-from modules.managers.app_config_manager import AppConfigManager
-from modules.managers.finance_config_manager import FinanceConfigManager
 from modules.managers.transaction_manager import TransactionManager
+from modules.managers.finance_config_manager import FinanceConfigManager
+from modules.managers.payee_manager import PayeeManager
+from modules.managers.app_config_manager import AppConfigManager
+from modules.managers.metadata_manager import MetadataManager  # Import MetadataManager for getting existing keys
 
 
 # --- Helper Functions for UI Reusability ---
@@ -38,7 +39,6 @@ def _display_dynamic_category_selector_ui(
         structured_categories: Dict[str, Any],  # Now expects the recursive structure
         scope_options: List[str],
         session_state_key_prefix: str,  # Unique prefix for session state keys
-        # is_transfer: bool = False # Removed as logic can be handled by scope_options and initial state
 ) -> None:
     """
     Displays dynamic category selection UI elements (scope, main, sub)
@@ -148,6 +148,22 @@ def _display_dynamic_category_selector_ui(
     )
 
 
+@st.cache_data
+def _get_all_unique_metadata_keys(_metadata_manager: MetadataManager) -> List[str]:
+    """
+    Retrieves all unique metadata keys from the metadata.csv file.
+    This function is cached to avoid re-reading the CSV on every rerun.
+    """
+    try:
+        metadata_keys = _metadata_manager.get_all_unique_metadata_keys()
+        if len(metadata_keys) > 0:
+            return [''] + metadata_keys
+        return ['']
+    except Exception as e:
+        st.warning(f"Could not load existing metadata keys: {e}. Starting with empty list.")
+        return ['']
+
+
 # --- Main Display Function ---
 
 def display_manual_entry_tab(transaction_manager: TransactionManager, config_manager: FinanceConfigManager,
@@ -168,6 +184,8 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
 
     existing_payee_names = transaction_manager.payee_manager.get_all_payee_names()
     payee_options = [''] + sorted(existing_payee_names)  # Sort for better UX
+
+    all_unique_metadata_keys = _get_all_unique_metadata_keys(transaction_manager.metadata_manager)
 
     # --- Step 1: Select Transaction Type (outside any form for immediate reactivity) ---
     selected_transaction_type = st.radio(
@@ -208,6 +226,10 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
         for key in list(st.session_state.keys()):
             if '_cat_ui' in key:
                 del st.session_state[key]
+        # Ensure metadata input fields also reset
+        if 'manual_metadata_entries' in st.session_state:
+            del st.session_state['manual_metadata_entries']
+
         st.rerun()  # Rerun to apply resets
 
     # --- Overall File Uploader (Always visible) ---
@@ -365,15 +387,17 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
         st.markdown(f"**Calculated Total Amount for Splits: {currency_symbol}{total_amount_sum:.2f}**")
 
         # --- Additional Metadata Section ---
-        with st.expander("Additional Metadata (Optional)"):
-            if 'manual_metadata_entries' not in st.session_state:
-                st.session_state.manual_metadata_entries = [{'key': '', 'value': ''}]
+        # Initialize manual_metadata_entries if not present, including a placeholder for selected key
+        if 'manual_metadata_entries' not in st.session_state:
+            st.session_state.manual_metadata_entries = [{'key': '', 'value': '', '_selected_from_list_key': ''}]
 
+        with st.expander("Additional Metadata (Optional)"):
             # Buttons to add/remove metadata rows
             col_meta_btns = st.columns([1, 1, 3])
             with col_meta_btns[0]:
                 if st.button("Add Metadata Field", key=f"{selected_transaction_type}_add_meta_btn"):
-                    st.session_state.manual_metadata_entries.append({'key': '', 'value': ''})
+                    st.session_state.manual_metadata_entries.append(
+                        {'key': '', 'value': '', '_selected_from_list_key': ''})
                     st.rerun()
             with col_meta_btns[1]:
                 if len(st.session_state.manual_metadata_entries) > 1:
@@ -385,12 +409,33 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
             for i, meta_entry in enumerate(st.session_state.manual_metadata_entries):
                 cols_meta = st.columns([1, 1])
                 with cols_meta[0]:
+                    # Selectbox for existing keys
+                    selected_key_from_list = st.selectbox(
+                        "Metadata Key (Select existing)",
+                        all_unique_metadata_keys,
+                        index=all_unique_metadata_keys.index(meta_entry['_selected_from_list_key']) if meta_entry[
+                                                                                                           '_selected_from_list_key'] in all_unique_metadata_keys else 0,
+                        placeholder="Choose from existing keys...",
+                        key=f"{selected_transaction_type}_meta_key_selectbox_{i}"
+                    )
+                    # If selection from box changes AND it's different from current text input, update text input
+                    if selected_key_from_list and selected_key_from_list != meta_entry['_selected_from_list_key']:
+                        meta_entry['_selected_from_list_key'] = selected_key_from_list  # Update internal tracker
+                        meta_entry['key'] = selected_key_from_list  # Set the actual key to selected value
+                        st.rerun()  # Rerun to update the text input
+
+                    # Text input for new/edited key (takes precedence)
                     meta_entry['key'] = st.text_input(
-                        "Metadata Key",
+                        "Metadata Key (Enter new or edit)",
                         value=meta_entry['key'],
-                        key=f"{selected_transaction_type}_meta_key_{i}",
+                        key=f"{selected_transaction_type}_meta_key_textinput_{i}",
                         placeholder="e.g., Tax Amount, Payment Method"
                     )
+                    st.markdown(
+                        "<small style='color: gray;'>The value in the 'Enter new or edit' box will be used.</small>",
+                        unsafe_allow_html=True
+                    )
+
                 with cols_meta[1]:
                     meta_entry['value'] = st.text_input(
                         "Metadata Value",
@@ -421,7 +466,7 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                 # Validate metadata entries
                 cleaned_metadata = []
                 for meta_entry in st.session_state.manual_metadata_entries:
-                    key = meta_entry['key'].strip()
+                    key = meta_entry['key'].strip()  # Use the text input value for the key
                     value = meta_entry['value'].strip()
                     if key and value:  # Only add if both key and value are non-empty
                         cleaned_metadata.append({'key': key, 'value': value})
@@ -497,11 +542,11 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                             'date': datetime.date.today(), 'payee': '', 'account': '', 'uploaded_file': None,
                             'manual_metadata': []  # Reset metadata after successful submission
                         }
-                        # Clear all category selection state variables
+                        # Clear category selector state for transfer
                         for key in list(st.session_state.keys()):
                             if '_cat_ui' in key:
                                 del st.session_state[key]
-                        # Ensure metadata input fields also reset
+                        # Reset the metadata input fields by clearing their session state
                         if 'manual_metadata_entries' in st.session_state:
                             del st.session_state['manual_metadata_entries']
 
@@ -621,14 +666,16 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                 full_path_parts_transfer) > 2 else ""
 
         # --- Additional Metadata Section for Transfers ---
-        with st.expander("Additional Metadata (Optional)"):
-            if 'manual_metadata_entries' not in st.session_state:  # Use the same metadata state as for splits
-                st.session_state.manual_metadata_entries = [{'key': '', 'value': ''}]
+        # Initialize manual_metadata_entries if not present, including a placeholder for selected key
+        if 'manual_metadata_entries' not in st.session_state:  # Use the same metadata state as for splits
+            st.session_state.manual_metadata_entries = [{'key': '', 'value': '', '_selected_from_list_key': ''}]
 
+        with st.expander("Additional Metadata (Optional)"):
             col_meta_btns = st.columns([1, 1, 3])
             with col_meta_btns[0]:
                 if st.button("Add Metadata Field", key="transfer_add_meta_btn"):
-                    st.session_state.manual_metadata_entries.append({'key': '', 'value': ''})
+                    st.session_state.manual_metadata_entries.append(
+                        {'key': '', 'value': '', '_selected_from_list_key': ''})
                     st.rerun()
             with col_meta_btns[1]:
                 if len(st.session_state.manual_metadata_entries) > 1:
@@ -639,11 +686,31 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
             for i, meta_entry in enumerate(st.session_state.manual_metadata_entries):
                 cols_meta = st.columns([1, 1])
                 with cols_meta[0]:
+                    # Selectbox for existing keys
+                    selected_key_from_list = st.selectbox(
+                        "Metadata Key (Select existing)",
+                        all_unique_metadata_keys,
+                        index=all_unique_metadata_keys.index(meta_entry['_selected_from_list_key']) if meta_entry[
+                                                                                                           '_selected_from_list_key'] in all_unique_metadata_keys else 0,
+                        placeholder="Choose from existing keys...",
+                        key=f"transfer_meta_key_selectbox_{i}"
+                    )
+                    # If selection from box changes AND it's different from current text input, update text input
+                    if selected_key_from_list and selected_key_from_list != meta_entry['_selected_from_list_key']:
+                        meta_entry['_selected_from_list_key'] = selected_key_from_list  # Update internal tracker
+                        meta_entry['key'] = selected_key_from_list  # Set the actual key to selected value
+                        st.rerun()  # Rerun to update the text input
+
+                    # Text input for new/edited key (takes precedence)
                     meta_entry['key'] = st.text_input(
-                        "Metadata Key",
+                        "Metadata Key (Enter new or edit)",
                         value=meta_entry['key'],
-                        key=f"transfer_meta_key_{i}",
+                        key=f"transfer_meta_key_textinput_{i}",
                         placeholder="e.g., Transfer Fee, Reason"
+                    )
+                    st.markdown(
+                        "<small style='color: gray;'>The value in the 'Enter new or edit' box will be used.</small>",
+                        unsafe_allow_html=True
                     )
                 with cols_meta[1]:
                     meta_entry['value'] = st.text_input(
@@ -759,7 +826,7 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                         for key in list(st.session_state.keys()):
                             if 'transfer_cat_ui' in key:
                                 del st.session_state[key]
-                        # Ensure metadata input fields also reset
+                        # Reset the metadata input fields by clearing their session state
                         if 'manual_metadata_entries' in st.session_state:
                             del st.session_state['manual_metadata_entries']
 

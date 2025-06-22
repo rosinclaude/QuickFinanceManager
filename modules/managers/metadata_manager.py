@@ -103,3 +103,12 @@ class MetadataManager:
             print(f"Metadata ID {metadata_id} deleted.")
         else:
             print(f"Metadata ID {metadata_id} not found.")
+
+    def get_all_unique_metadata_keys(self) -> List[str]:
+        """
+        Retrieves all unique metadata keys from the metadata.csv file.
+        This function is cached to avoid re-reading the CSV on every rerun.
+        """
+        if not self._metadata_df.empty and 'MetadataKey' in self._metadata_df.columns:
+            return sorted(self._metadata_df['MetadataKey'].dropna().unique().tolist())
+        return []
