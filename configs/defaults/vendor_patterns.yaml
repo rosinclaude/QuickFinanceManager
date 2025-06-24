@@ -1,0 +1,709 @@
+vendors:
+  - name: "MAXI"
+    patterns:
+      - "MAXI"
+      - "GROUPE PROVIGO"
+      - "MAXI & CIE"
+    custom_parser_module: null
+  - name: "COSTCO"
+    patterns:
+      - "COSTCO WHOLESALE"
+      - "COSTCO"
+      - "WHOLESALE CORP"
+    custom_parser_module: "costco_parser"
+  - name: "SAQ"
+    patterns:
+      - "SAQ"
+      - "SOCIETE DES ALCOOLS DU QUEBEC"
+      - "SAQ DEPOT"
+    custom_parser_module: null
+  - name: "WALMART"
+    patterns:
+      - "WAL-MART"
+      - "WALMART"
+      - "WALMART SUPERCENTRE"
+      - "WALMART.CA"
+    custom_parser_module: null
+  - name: "IGA"
+    patterns:
+      - "IGA ST-HUBERT"
+      - "IGA"
+      - "LES MARCHÉS IGA"
+      - "MARCHE IGA"
+    custom_parser_module: null
+  - name: "LOBLAW"
+    patterns:
+      - "LOBLAW"
+      - "LOBLAW COMPANIES LIMITED"
+      - "FORTIN & FILS" # Often associated with Loblaw banners
+      - "PROVIGO" # Also a Loblaw banner
+      - "PRESIDENT'S CHOICE"
+    custom_parser_module: null
+  - name: "RENO-DEPOT"
+    patterns:
+      - "RENO-DEPOT"
+      - "RENO DEPOT"
+      - "RONA" # Reno-Depot is part of RONA
+    custom_parser_module: null
+  - name: "CANADIAN TIRE"
+    patterns:
+      - "CANADIAN TIRE"
+      - "CAN. TIRE"
+      - "CTIRE"
+    custom_parser_module: null
+  - name: "RONA"
+    patterns:
+      - "RONA"
+      - "RONA LE MARCHE"
+      - "RONA QUINCAILLERIE"
+    custom_parser_module: null
+  - name: "AMAZON"
+    patterns:
+      - "AMAZON"
+      - "AMAZON.CA"
+      - "AMZN.COM"
+      - "AMAZON SERVICES"
+    custom_parser_module: "amazon_parser"
+  - name: "BELL"
+    patterns:
+      - "BELL CANADA"
+      - "BELL MOBILITY"
+      - "BELL ALIANT"
+      - "BELL"
+    custom_parser_module: null
+  - name: "VIDEOTRON"
+    patterns:
+      - "VIDEOTRON"
+      - "QUEBECOR MEDIA"
+      - "VIDEOTRON LTEE"
+    custom_parser_module: null
+  - name: "HYDRO-QUEBEC"
+    patterns:
+      - "HYDRO-QUEBEC"
+      - "HYDRO QUEBEC"
+    custom_parser_module: null
+  - name: "ENERGIR" # Formerly Gaz Metro
+    patterns:
+      - "ENERGIR"
+      - "GAZ METRO"
+      - "GAZODUC TRANSQUÉBÉCOIS"
+    custom_parser_module: null
+  - name: "ESSO"
+    patterns:
+      - "ESSO"
+      - "IMPERIAL OIL"
+      - "ESSO GAS BAR"
+    custom_parser_module: null
+  - name: "SHELL"
+    patterns:
+      - "SHELL"
+      - "SHELL CANADA"
+    custom_parser_module: null
+  - name: "ULTRAMAR"
+    patterns:
+      - "ULTRAMAR"
+      - "VALERO ENERGY"
+      - "ULTRAMAR EXPRESS"
+    custom_parser_module: null
+  - name: "PHARMAPRIX"
+    patterns:
+      - "PHARMAPRIX"
+      - "SHOPPERS DRUG MART" # Shoppers Drug Mart operates under the Pharmaprix banner in Quebec
+      - "PHARMAPRIX SANTE"
+    custom_parser_module: null
+  - name: "JEAN COUTU"
+    patterns:
+      - "JEAN COUTU"
+      - "GROUPE JEAN COUTU"
+      - "PHARMACIE JEAN COUTU"
+    custom_parser_module: null
+  - name: "UNIPRIX"
+    patterns:
+      - "UNIPRIX"
+      - "UNIPRIX SANTE"
+    custom_parser_module: null
+  - name: "METRO"
+    patterns:
+      - "METRO"
+      - "MARCHE METRO"
+      - "METRO PLUS"
+      - "METRO RICHELIEU"
+    custom_parser_module: null
+  - name: "HOME DEPOT"
+    patterns:
+      - "HOME DEPOT"
+      - "HOME DEPOT CANADA"
+      - "HOMEDEPOT"
+    custom_parser_module: null
+  - name: "LOWE'S"
+    patterns:
+      - "LOWE'S"
+      - "LOWES"
+      - "LOWE'S CANADA"
+    custom_parser_module: null
+  - name: "BEST BUY"
+    patterns:
+      - "BEST BUY"
+      - "BESTBUY"
+      - "BESTBUY.CA"
+    custom_parser_module: null
+  - name: "TD"
+    patterns:
+      - "TD CANADA TRUST"
+      - "TD BANK"
+      - "TD"
+      - "TORONTO-DOMINION BANK"
+    custom_parser_module: null
+  - name: "RBC"
+    patterns:
+      - "RBC ROYAL BANK"
+      - "RBC"
+      - "ROYAL BANK OF CANADA"
+    custom_parser_module: null
+  - name: "BMO"
+    patterns:
+      - "BMO BANK OF MONTREAL"
+      - "BMO"
+      - "BANK OF MONTREAL"
+    custom_parser_module: null
+  - name: "SCOTIABANK"
+    patterns:
+      - "SCOTIABANK"
+      - "BANK OF NOVA SCOTIA"
+    custom_parser_module: null
+  - name: "CIBC"
+    patterns:
+      - "CIBC"
+      - "CANADIAN IMPERIAL BANK OF COMMERCE"
+    custom_parser_module: null
+  - name: "DESJARDINS"
+    patterns:
+      - "DESJARDINS"
+      - "CAISSE DESJARDINS"
+      - "FEDERATION DES CAISSES DESJARDINS"
+      - "ACCES D"
+    custom_parser_module: null
+  - name: "VIA RAIL"
+    patterns:
+      - "VIA RAIL CANADA"
+      - "VIA RAIL"
+    custom_parser_module: null
+  - name: "AIR CANADA"
+    patterns:
+      - "AIR CANADA"
+      - "AIR CANADA ROUGE"
+      - "AIRCANADA.COM"
+    custom_parser_module: null
+  - name: "WESTJET"
+    patterns:
+      - "WESTJET"
+      - "WESTJET.COM"
+    custom_parser_module: null
+  - name: "STM" # Société de transport de Montréal
+    patterns:
+      - "STM"
+      - "SOCIETE DE TRANSPORT DE MONTREAL"
+      - "OPUS CARD"
+    custom_parser_module: null
+  - name: "SQDC" # Société québécoise du cannabis
+    patterns:
+      - "SQDC"
+      - "SOCIETE QUEBECOISE DU CANNABIS"
+    custom_parser_module: null
+  - name: "MCGILL UNIVERSITY"
+    patterns:
+      - "MCGILL UNIVERSITY"
+      - "UNIVERSITE MCGILL"
+    custom_parser_module: null
+  - name: "UNIVERSITE DE MONTREAL"
+    patterns:
+      - "UNIVERSITE DE MONTREAL"
+      - "UDEM"
+    custom_parser_module: null
+  - name: "CONCORDIA UNIVERSITY"
+    patterns:
+      - "CONCORDIA UNIVERSITY"
+      - "UNIVERSITE CONCORDIA"
+    custom_parser_module: null
+  - name: "UQAM"
+    patterns:
+      - "UQAM"
+      - "UNIVERSITE DU QUEBEC A MONTREAL"
+    custom_parser_module: null
+  - name: "TIM HORTONS"
+    patterns:
+      - "TIM HORTONS"
+      - "TIMS"
+      - "T.HORTONS"
+    custom_parser_module: null
+  - name: "STARBUCKS"
+    patterns:
+      - "STARBUCKS"
+      - "STARBUCKS COFFEE"
+    custom_parser_module: null
+  - name: "MCDONALD'S"
+    patterns:
+      - "MCDONALD'S"
+      - "MC DONALDS"
+      - "GOLDEN ARCHES"
+    custom_parser_module: null
+  - name: "BURGER KING"
+    patterns:
+      - "BURGER KING"
+      - "BK"
+    custom_parser_module: null
+  - name: "SUBWAY"
+    patterns:
+      - "SUBWAY"
+      - "SUBWAY SANDWICHES"
+    custom_parser_module: null
+  - name: "PIZZA PIZZA"
+    patterns:
+      - "PIZZA PIZZA"
+    custom_parser_module: null
+  - name: "DOMINO'S PIZZA"
+    patterns:
+      - "DOMINO'S PIZZA"
+      - "DOMINOS"
+    custom_parser_module: null
+  - name: "HARVEY'S"
+    patterns:
+      - "HARVEY'S"
+    custom_parser_module: null
+  - name: "ST-HUBERT"
+    patterns:
+      - "ST-HUBERT"
+      - "ROTISSERIE ST-HUBERT"
+      - "RESTAURANT ST-HUBERT"
+    custom_parser_module: null
+  - name: "LE VIEUX DUBLIN" # Popular Montreal pub
+    patterns:
+      - "LE VIEUX DUBLIN"
+      - "OLD DUBLIN"
+    custom_parser_module: null
+  - name: "LA BANQUISE" # Famous poutine spot
+    patterns:
+      - "LA BANQUISE"
+    custom_parser_module: null
+  - name: "ADNOC" # Common gas station
+    patterns:
+      - "ADNOC"
+      - "ADNOC SERVICE STATION"
+    custom_parser_module: null
+  - name: "COUCHER TARD" # Convenience store
+    patterns:
+      - "COUCHER TARD"
+      - "ALIMENTATION COUCHER TARD"
+      - "CIRCLE K" # International brand of Couche-Tard
+    custom_parser_module: null
+  - name: "DEPANNEUR" # Generic term for convenience store, useful for broad matching
+    patterns:
+      - "DEPANNEUR"
+      - "DEP."
+    custom_parser_module: null
+  - name: "DOLLARAMA"
+    patterns:
+      - "DOLLARAMA"
+      - "DOLLARAMA INC"
+    custom_parser_module: null
+  - name: "CANADIAN APPLIANCE SOURCE"
+    patterns:
+      - "CANADIAN APPLIANCE SOURCE"
+      - "CAS"
+    custom_parser_module: null
+  - name: "BRAULT & MARTINEAU"
+    patterns:
+      - "BRAULT & MARTINEAU"
+      - "BRAULT ET MARTINEAU"
+    custom_parser_module: null
+  - name: "BRICK"
+    patterns:
+      - "THE BRICK"
+      - "BRICK"
+    custom_parser_module: null
+  - name: "JYSK"
+    patterns:
+      - "JYSK"
+    custom_parser_module: null
+  - name: "WINNERS"
+    patterns:
+      - "WINNERS"
+      - "TJX COMPANIES"
+    custom_parser_module: null
+  - name: "HOMESENSE"
+    patterns:
+      - "HOMESENSE"
+      - "HOME SENSE"
+    custom_parser_module: null
+  - name: "MARSHALLS"
+    patterns:
+      - "MARSHALLS"
+    custom_parser_module: null
+  - name: "SPORT CHEK"
+    patterns:
+      - "SPORT CHEK"
+      - "SPORTS CHEK"
+    custom_parser_module: null
+  - name: "ATMOSFEAR" # Clothing store
+    patterns:
+      - "ATMOSFEAR"
+    custom_parser_module: null
+  - name: "ROOTS"
+    patterns:
+      - "ROOTS"
+      - "ROOTS CANADA"
+    custom_parser_module: null
+  - name: "LULULEMON"
+    patterns:
+      - "LULULEMON ATHLETICA"
+      - "LULULEMON"
+    custom_parser_module: null
+  - name: "APPLE"
+    patterns:
+      - "APPLE CANADA"
+      - "APPLE.COM"
+      - "APPLE STORE"
+    custom_parser_module: null
+  - name: "GOOGLE"
+    patterns:
+      - "GOOGLE INC"
+      - "GOOGLE PLAY"
+      - "GOOGLE ADS"
+      - "GOOGLE CLOUD"
+    custom_parser_module: null
+  - name: "MICROSOFT"
+    patterns:
+      - "MICROSOFT CANADA"
+      - "MICROSOFT STORE"
+      - "MICROSOFT AZURE"
+    custom_parser_module: null
+  - name: "ROGERS"
+    patterns:
+      - "ROGERS COMMUNICATIONS"
+      - "ROGERS WIRELESS"
+    custom_parser_module: null
+  - name: "TELUS"
+    patterns:
+      - "TELUS"
+      - "TELUS MOBILITY"
+    custom_parser_module: null
+  - name: "FREEDOM MOBILE"
+    patterns:
+      - "FREEDOM MOBILE"
+      - "SHAW COMMUNICATIONS" # Freedom is owned by Shaw
+    custom_parser_module: null
+  - name: "KOODO MOBILE"
+    patterns:
+      - "KOODO MOBILE"
+    custom_parser_module: null
+  - name: "VIRGIN PLUS"
+    patterns:
+      - "VIRGIN PLUS"
+      - "VIRGIN MOBILE"
+    custom_parser_module: null
+  - name: "FIZZ" # Quebec-based mobile/internet provider
+    patterns:
+      - "FIZZ"
+      - "FIZZ.CA"
+    custom_parser_module: null
+  - name: "UBER"
+    patterns:
+      - "UBER TECHNOLOGIES"
+      - "UBER RIDE"
+      - "UBER EATS"
+    custom_parser_module: "uber_parser"
+  - name: "DOORDASH"
+    patterns:
+      - "DOORDASH"
+      - "DOORDASH.COM"
+    custom_parser_module: null
+  - name: "SKIPTHEDISHES"
+    patterns:
+      - "SKIPTHEDISHES"
+      - "SKIP THEDISHES"
+    custom_parser_module: null
+  - name: "FANTASTIK" # Cleaning supplies
+    patterns:
+      - "FANTASTIK"
+      - "FANTASTIC"
+    custom_parser_module: null
+  - name: "BUREAU EN GROS" # Staples in Quebec
+    patterns:
+      - "BUREAU EN GROS"
+      - "STAPLES"
+      - "STAPLES BUSINESS ADVANTAGE"
+    custom_parser_module: null
+  - name: "GRAND & TOY"
+    patterns:
+      - "GRAND & TOY"
+      - "GRAND AND TOY"
+    custom_parser_module: null
+  - name: "MICHAELS"
+    patterns:
+      - "MICHAELS STORES"
+      - "MICHAELS ARTS & CRAFTS"
+    custom_parser_module: null
+  - name: "RONA L'ENTREPÔT"
+    patterns:
+      - "RONA L'ENTREPÔT"
+    custom_parser_module: null
+  - name: "INTERAC" # Payment network, not a direct vendor but often appears on receipts
+    patterns:
+      - "INTERAC"
+      - "DEBIT INTERAC"
+    custom_parser_module: null
+  - name: "VISA" # Payment network
+    patterns:
+      - "VISA"
+    custom_parser_module: null
+  - name: "MASTERCARD" # Payment network
+    patterns:
+      - "MASTERCARD"
+    custom_parser_module: null
+  - name: "AMERICAN EXPRESS" # Payment network
+    patterns:
+      - "AMERICAN EXPRESS"
+      - "AMEX"
+    custom_parser_module: null
+  - name: "PAYPAL" # Online payment
+    patterns:
+      - "PAYPAL"
+      - "PAYPAL PTE LTD"
+    custom_parser_module: null
+  - name: "SOCIETE CANADIENNE DES POSTES" # Canada Post
+    patterns:
+      - "SOCIETE CANADIENNE DES POSTES"
+      - "CANADA POST"
+      - "POSTES CANADA"
+    custom_parser_module: null
+  - name: "PUROLATOR"
+    patterns:
+      - "PUROLATOR"
+      - "PUROLATOR INC"
+    custom_parser_module: null
+  - name: "FEDEX"
+    patterns:
+      - "FEDEX"
+      - "FEDERAL EXPRESS"
+    custom_parser_module: null
+  - name: "UPS"
+    patterns:
+      - "UPS"
+      - "UNITED PARCEL SERVICE"
+    custom_parser_module: null
+  - name: "SUN LIFE FINANCIAL"
+    patterns:
+      - "SUN LIFE FINANCIAL"
+      - "SUN LIFE"
+    custom_parser_module: null
+  - name: "MANULIFE"
+    patterns:
+      - "MANULIFE FINANCIAL"
+      - "MANULIFE"
+    custom_parser_module: null
+  - name: "GREAT-WEST LIFE"
+    patterns:
+      - "GREAT-WEST LIFE ASSURANCE COMPANY"
+      - "GREAT WEST LIFE"
+    custom_parser_module: null
+  - name: "ALLSTATE"
+    patterns:
+      - "ALLSTATE INSURANCE"
+      - "ALLSTATE"
+    custom_parser_module: null
+  - name: "BELAIRDIRECT"
+    patterns:
+      - "BELAIRDIRECT"
+    custom_parser_module: null
+  - name: "DESJARDINS ASSURANCES"
+    patterns:
+      - "DESJARDINS ASSURANCES"
+      - "DESJARDINS INSURANCE"
+    custom_parser_module: null
+  - name: "INTACT ASSURANCE"
+    patterns:
+      - "INTACT ASSURANCE"
+      - "INTACT INSURANCE"
+    custom_parser_module: null
+  - name: "TELUS HEALTH"
+    patterns:
+      - "TELUS HEALTH"
+      - "TELUS SANTE"
+    custom_parser_module: null
+  - name: "LOBLAW PHARMACY"
+    patterns:
+      - "LOBLAW PHARMACY"
+      - "PHARMACIE LOBLAW"
+    custom_parser_module: null
+  - name: "SUPER C"
+    patterns:
+      - "SUPER C"
+      - "MARCHE SUPER C"
+    custom_parser_module: null
+  - name: "ADONIS" # Mediterranean/Middle Eastern supermarket
+    patterns:
+      - "ADONIS"
+      - "MARCHE ADONIS"
+    custom_parser_module: null
+  - name: "MARCHÉ PASTEUR" # Gourmet grocery store in Montreal
+    patterns:
+      - "MARCHE PASTEUR"
+      - "PASTEUR MONTREAL"
+    custom_parser_module: null
+  - name: "CENTRALE BERGHAM" # Popular bakery/cafe in Montreal
+    patterns:
+      - "CENTRALE BERGHAM"
+      - "BERGHA M"
+    custom_parser_module: null
+  - name: "OLIVE & GOURMANDO" # Popular cafe/bakery in Old Montreal
+    patterns:
+      - "OLIVE & GOURMANDO"
+      - "OLIVE ET GOURMANDO"
+    custom_parser_module: null
+  - name: "SCHWARTZ'S" # Famous deli in Montreal
+    patterns:
+      - "SCHWARTZ'S"
+      - "SCHWARTZ'S DELI"
+    custom_parser_module: null
+  - name: "FAIRMOUNT BAGEL" # Iconic Montreal bagel shop
+    patterns:
+      - "FAIRMOUNT BAGEL"
+      - "BAGEL FAIRMOUNT"
+    custom_parser_module: null
+  - name: "ST-VIATEUR BAGEL" # Another iconic Montreal bagel shop
+    patterns:
+      - "ST-VIATEUR BAGEL"
+      - "BAGEL ST-VIATEUR"
+    custom_parser_module: null
+  - name: "LA RONDE" # Amusement park
+    patterns:
+      - "LA RONDE"
+      - "SIX FLAGS LA RONDE"
+    custom_parser_module: null
+  - name: "BIODOME DE MONTREAL"
+    patterns:
+      - "BIODOME DE MONTREAL"
+      - "BIODOME"
+    custom_parser_module: null
+  - name: "JARDIN BOTANIQUE DE MONTREAL"
+    patterns:
+      - "JARDIN BOTANIQUE DE MONTREAL"
+      - "JARDIN BOTANIQUE"
+    custom_parser_module: null
+  - name: "PLANETARIUM RIO TINTO"
+    patterns:
+      - "PLANETARIUM RIO TINTO"
+      - "PLANETARIUM MONTREAL"
+    custom_parser_module: null
+  - name: "PARC JEAN-DRAPEAU"
+    patterns:
+      - "PARC JEAN-DRAPEAU"
+    custom_parser_module: null
+  - name: "HOTEL" # Generic for hotels
+    patterns:
+      - "HOTEL"
+      - "HÔTEL"
+      - "HOTEL DE LA MONTAGNE" # Example of a specific hotel
+      - "FAIRMONT THE QUEEN ELIZABETH"
+      - "HILTON GARDEN INN"
+      - "MARRIOTT"
+    custom_parser_module: null
+  - name: "RESTAURANT" # Generic for restaurants
+    patterns:
+      - "RESTAURANT"
+      - "RESTO"
+      - "BRASSERIE"
+      - "CAFÉ"
+      - "PUB"
+    custom_parser_module: null
+  - name: "ESSENCE" # Generic for gas
+    patterns:
+      - "ESSENCE"
+      - "GAZ"
+      - "CARBURANT"
+    custom_parser_module: null
+  - name: "PHARMACIE" # Generic for pharmacy
+    patterns:
+      - "PHARMACIE"
+      - "DRUG STORE"
+    custom_parser_module: null
+  - name: "HOSPITAL" # Generic for hospitals
+    patterns:
+      - "HOPITAL"
+      - "HÔPITAL"
+      - "CENTRE HOSPITALIER"
+    custom_parser_module: null
+  - name: "CLINIC" # Generic for clinics
+    patterns:
+      - "CLINIQUE"
+      - "CLINIC"
+    custom_parser_module: null
+  - name: "DENTIST"
+    patterns:
+      - "DENTISTE"
+      - "CLINIQUE DENTAIRE"
+      - "DENTAL CLINIC"
+    custom_parser_module: null
+  - name: "OPTICIAN"
+    patterns:
+      - "OPTICIEN"
+      - "LUNETTERIE"
+      - "OPTIQUE"
+    custom_parser_module: null
+  - name: "VETERINARIAN"
+    patterns:
+      - "VETERINAIRE"
+      - "CLINIQUE VETERINAIRE"
+    custom_parser_module: null
+  - name: "GROCERY STORE" # Generic for grocery stores
+    patterns:
+      - "ÉPICERIE"
+      - "SUPERMARCHE"
+      - "GROCERY"
+    custom_parser_module: null
+  - name: "HARDWARE STORE" # Generic for hardware stores
+    patterns:
+      - "QUINCAILLERIE"
+      - "HARDWARE"
+    custom_parser_module: null
+  - name: "ELECTRONICS STORE" # Generic for electronics stores
+    patterns:
+      - "ELECTRONIQUE"
+      - "ELECTRONICS"
+    custom_parser_module: null
+  - name: "CLOTHING STORE" # Generic for clothing stores
+    patterns:
+      - "VETEMENTS"
+      - "HABITS"
+      - "CLOTHING"
+      - "BOUTIQUE"
+    custom_parser_module: null
+  - name: "DRY CLEANERS"
+    patterns:
+      - "NETTOYEUR A SEC"
+      - "DRY CLEANERS"
+    custom_parser_module: null
+  - name: "HAIR SALON"
+    patterns:
+      - "SALON DE COIFFURE"
+      - "BARBER SHOP"
+      - "HAIR SALON"
+    custom_parser_module: null
+  - name: "CAR WASH"
+    patterns:
+      - "LAVAGE AUTO"
+      - "CAR WASH"
+    custom_parser_module: null
+  - name: "PARKING"
+    patterns:
+      - "STATIONNEMENT"
+      - "PARKING"
+      - "PARKADE"
+    custom_parser_module: null
+  - name: "TOLL"
+    patterns:
+      - "PEAGE"
+      - "TOLL"
+      - "A25" # Example for a specific toll bridge in Montreal
+      - "HIGHWAY 30"
+    custom_parser_module: null
