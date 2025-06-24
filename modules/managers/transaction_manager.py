@@ -53,7 +53,8 @@ class TransactionManager:
             vendor_patterns_file=self.app_config['paths']['vendor_patterns_file'],
             llm_model_name=llm_config.get('vendor_fuzzy_match_model', 'all-MiniLM-L6-v2'),
             llm_similarity_threshold=llm_config.get('vendor_fuzzy_match_threshold', 0.85),
-            llm_ambiguity_threshold=llm_config.get('vendor_fuzzy_match_ambiguity_threshold', 0.65) # NEW
+            llm_ambiguity_threshold=llm_config.get('vendor_fuzzy_match_ambiguity_threshold', 0.65), # NEW
+            payee_manager=self.payee_manager, # NEW
         )
 
         # OCRProcessor initialization, passing relevant app_config parts
@@ -137,7 +138,6 @@ class TransactionManager:
                 print(f"Saved uploaded file to: {file_path}")
 
             transactions_to_add = []
-            currency = self.config_manager.get_currency()
 
             # The 'payee' received here is already the conformed/user-confirmed name from the UI.
             # Just ensure it exists in the payee database.
@@ -168,6 +168,7 @@ class TransactionManager:
                     self.payee_manager.add_payee(effective_payee)
 
                 effective_account = split.get('account', account)
+                currency = self.config_manager.get_currency(effective_account)
 
                 # If category is not explicitly provided (e.g., from manual input UI), categorize
                 if not split_full_budget_path or split_full_budget_path == 'Uncategorized:Unassigned':
