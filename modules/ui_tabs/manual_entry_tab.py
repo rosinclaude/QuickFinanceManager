@@ -174,6 +174,58 @@ def _get_all_unique_metadata_keys(_metadata_manager: MetadataManager) -> List[st
         return ['']
 
 
+# --- Callback for Payee text input changes ---
+def _handle_payee_input_change(transaction_manager: TransactionManager, app_config_manager: AppConfigManager):
+    """
+    Callback function triggered when the payee text input changes.
+    Performs fuzzy matching and stores suggestion in session state.
+    """
+    # Get the raw input directly from the widget's key, not from global_transaction_data['payee']
+    raw_payee_input = st.session_state.get("general_payee_text_input", "").strip()
+
+    # Store the raw input separately, this will be used for displaying the original text
+    st.session_state.raw_payee_input_original = raw_payee_input
+
+    if not raw_payee_input:
+        st.session_state.payee_suggestion_result = None
+        st.session_state.payee_decision_made = True  # No decision needed if input is empty
+        # If input is empty, also clear the current payee so it doesn't hold old value
+        st.session_state.global_transaction_data['payee'] = ''
+        return
+
+    # Get config thresholds from app_config
+    # llm_config = app_config_manager.get_app_settings().get('llm_config', {})
+    # # Using the new threshold names from app_config.yaml
+    # llm_similarity_threshold = llm_config.get('vendor_fuzzy_match_threshold', 0.85)
+    # llm_ambiguity_threshold = llm_config.get('vendor_fuzzy_match_ambiguity_threshold', 0.65)
+
+    vendor_config_manager = transaction_manager.vendor_config_manager
+
+    # Call the new suggestion method from vendor_config_manager
+    suggestion_result = vendor_config_manager.suggest_conformed_payee(raw_payee_input)
+
+    st.session_state.payee_suggestion_result = suggestion_result
+    st.session_state.payee_decision_made = False  # Reset decision on new input, assume user needs to confirm
+
+    # Determine what to do based on the suggestion status
+    if suggestion_result['status'] in ['HIGH_CONFIDENCE', 'EXACT_MATCH']:
+        # If high confidence or exact match, auto-accept and set the conformed name
+        st.session_state.payee_decision_made = True
+        st.session_state.global_transaction_data['payee'] = suggestion_result['suggested_conformed_name']
+        print(f"Auto-conformed '{raw_payee_input}' to '{suggestion_result['suggested_conformed_name']}'.")
+    elif suggestion_result['status'] == 'AMBIGUOUS':
+        # For ambiguous, set the suggested name as the current payee (for pre-filling if accepted)
+        # but keep payee_decision_made = False to prompt user interaction.
+        st.session_state.global_transaction_data['payee'] = suggestion_result['suggested_conformed_name']
+        print(
+            f"Ambiguous match for '{raw_payee_input}'. Suggested: '{suggestion_result['suggested_conformed_name']}'. User decision required.")
+    else:  # NO_MATCH
+        # No high-confidence or ambiguous match, use raw input, consider it decided (as a new payee)
+        st.session_state.payee_decision_made = True
+        st.session_state.global_transaction_data['payee'] = raw_payee_input
+        print(f"No strong match for '{raw_payee_input}'. Will use as new payee.")
+
+
 # --- Main Display Function ---
 
 def display_manual_entry_tab(transaction_manager: TransactionManager, config_manager: FinanceConfigManager,
@@ -195,8 +247,6 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
     existing_payee_names = transaction_manager.payee_manager.get_all_payee_names()
     payee_options = [''] + sorted(existing_payee_names)  # Sort for better UX
 
-    # --- Call the cached function using the metadata manager instance ---
-    # The caching is now tied to the _metadata_manager object.
     all_unique_metadata_keys = _get_all_unique_metadata_keys(transaction_manager.metadata_manager)
 
     # --- Step 1: Select Transaction Type (outside any form for immediate reactivity) ---
@@ -208,7 +258,6 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
     )
 
     # --- Initialize/Reset Global Transaction Data ---
-    # This data is used by all transaction types unless overridden by specific sections (like Transfer)
     if 'global_transaction_data' not in st.session_state:
         st.session_state.global_transaction_data = {
             'date': datetime.date.today(),
@@ -217,6 +266,13 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
             'uploaded_file': None,
             'manual_metadata': []  # Initialize manual metadata list
         }
+    # Initialize payee decision state and raw input tracker on first load
+    if 'payee_suggestion_result' not in st.session_state:
+        st.session_state.payee_suggestion_result = None
+    if 'payee_decision_made' not in st.session_state:
+        st.session_state.payee_decision_made = True  # Default to True, assume no decision needed until input changes
+    if 'raw_payee_input_original' not in st.session_state:
+        st.session_state.raw_payee_input_original = ''
 
     # Reset general transaction data if transaction type changes
     if st.session_state.get('last_selected_transaction_type_general_reset') != selected_transaction_type:
@@ -228,6 +284,11 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
             'uploaded_file': None,
             'manual_metadata': []  # Reset metadata on type change
         }
+        # Reset payee specific UI state
+        st.session_state.payee_suggestion_result = None
+        st.session_state.payee_decision_made = True  # Default to True
+        st.session_state.raw_payee_input_original = ''  # Reset raw input tracker
+
         st.session_state['last_selected_transaction_type_general_reset'] = selected_transaction_type
 
         # Clear split/transfer data
@@ -264,12 +325,15 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
         )
 
         # Payee Selection/Entry
+        # The selectbox for existing payees
         selected_payee_from_list = st.selectbox(
             "Select an existing Payer/Payee (Optional)",
             payee_options,
-            index=0,  # Default to empty string
+            # Set initial index to the current payee if it's in the options, else 0 (empty)
+            index=payee_options.index(st.session_state.global_transaction_data['payee']) if
+            st.session_state.global_transaction_data['payee'] in payee_options else 0,
             placeholder="Choose from recent payees...",
-            key="general_payee_list_selectbox"
+            key="general_payee_list_selectbox",
         )
         st.info("If you select an existing payee, it will appear in the text input below. You can then edit or add a new payee directly in the text input. The **text input value** will be used for the transaction.")
 
@@ -277,19 +341,84 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
         # only if the text input is currently empty or matches the previously selected list item.
         # This prevents overwriting user's manual input if they start typing.
         if selected_payee_from_list and selected_payee_from_list != st.session_state.global_transaction_data['payee']:
+            # This check ensures we only update if the selectbox value is genuinely different
+            # from what's currently selected OR if the text input itself is empty.
+            # This helps avoid overwriting user's manual typing.
+            st.session_state['general_payee_text_input'] = selected_payee_from_list
             st.session_state.global_transaction_data['payee'] = selected_payee_from_list
-            st.rerun()  # Rerun to update the text input
+            # Explicitly trigger the handler as if text was typed, so fuzzy matching runs
+            _handle_payee_input_change(transaction_manager, app_config_manager)
+            st.rerun()  # Rerun to update the text input value displayed
 
+        # The text input for manual entry or confirming selection
         st.session_state.global_transaction_data['payee'] = st.text_input(
-            "Payer/Payee (Type a new one or confirm selection)",
+            "Payer/Payee (Enter new or confirm suggestion)",
             value=st.session_state.global_transaction_data['payee'],
-            key="general_payee_text_input",
-            placeholder="Type payee name or select from above..."
+            key="general_payee_text_input",  # This key stores the current text input value
+            placeholder="Type payee name or select from above...",
+            on_change=_handle_payee_input_change,  # Trigger on change for fuzzy matching
+            args=(transaction_manager, app_config_manager)
         )
+        st.markdown(
+            "<small style='color: gray;'>The value in the text box above will be used. Selecting from the list will pre-fill this box.</small>",
+            unsafe_allow_html=True)
 
-        # Account Selection
+        # --- Display Payee Suggestion/Confirmation UI ---
+        suggestion_result = st.session_state.payee_suggestion_result
+        # The original input from the user before any auto-conformation/pre-filling
+        original_payee_typed = st.session_state.raw_payee_input_original
+
+        if suggestion_result and not st.session_state.payee_decision_made:
+            status = suggestion_result['status']
+            suggested_name = suggestion_result['suggested_conformed_name']
+
+            if status == 'AMBIGUOUS':
+                st.warning(
+                    f"Is '{original_payee_typed}' the same as **'{suggested_name}'** (Similarity: {suggestion_result['similarity_score']:.2f})?")
+                col_confirm, col_new = st.columns(2)
+                with col_confirm:
+                    if st.button(f"Yes, use '{suggested_name}'", key="confirm_payee_suggestion"):
+                        st.session_state.global_transaction_data['payee'] = suggested_name
+                        st.session_state.payee_decision_made = True
+                        st.rerun()
+                with col_new:
+                    if st.button(f"No, use '{original_payee_typed}' as new payee", key="reject_payee_suggestion"):
+                        st.session_state.global_transaction_data['payee'] = original_payee_typed
+                        st.session_state.payee_decision_made = True
+                        st.rerun()
+
+                # Display alternatives if any
+                if suggestion_result['alternatives']:
+                    alternative_names_for_display = [
+                        alt['name'] for alt in suggestion_result['alternatives']
+                        if alt['name'] != suggested_name  # Exclude the main suggestion
+                    ]
+                    if alternative_names_for_display:
+                        selected_alt_from_options = st.selectbox(
+                            "Or choose from other similar payees:",
+                            [''] + sorted(alternative_names_for_display),  # Sort for consistency
+                            key="select_alternative_payee"
+                        )
+                        if selected_alt_from_options:
+                            st.session_state.global_transaction_data['payee'] = selected_alt_from_options
+                            st.session_state.payee_decision_made = True
+                            st.rerun()
+
+            elif status in ['NO_MATCH']:  # Explicitly 'NO_MATCH'
+                # If no match, it's implicitly decided to use the raw input as a new payee
+                st.info(
+                    f"No high-confidence match found for '{original_payee_typed}'. This will be added as a new payee.")
+                st.session_state.payee_decision_made = True  # Decision is implicitly made to use as new
+                st.session_state.global_transaction_data['payee'] = original_payee_typed  # Ensure original is used
+
+            elif status in ['EXACT_MATCH', 'HIGH_CONFIDENCE'] and st.session_state.payee_decision_made:
+                # If it's a high confidence or exact match and already decided (auto-set by callback)
+                st.success(f"Payee conformed to: **{st.session_state.global_transaction_data['payee']}**")
+
+        # Account Selection (remains the same)
         account_idx = next((i for i, opt in enumerate(account_options) if
-                            _get_account_name_from_display(opt) == st.session_state.global_transaction_data['account']), 0)
+                            _get_account_name_from_display(opt) == st.session_state.global_transaction_data['account']),
+                           0)
         account_display = st.selectbox(
             "Account (Overall)",
             account_options,
@@ -383,7 +512,8 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
 
             # Update split_data with values from the category selector's session state
             # Ensure the session state key for full_budget_path is accessed safely
-            current_full_path = st.session_state.get(f"{selected_transaction_type}_split_{i}_cat_ui_full_budget_path", "")
+            current_full_path = st.session_state.get(f"{selected_transaction_type}_split_{i}_cat_ui_full_budget_path",
+                                                     "")
             split_data['full_budget_path'] = current_full_path
 
             full_path_parts = current_full_path.split(':')
@@ -423,7 +553,8 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                         "Metadata Key (Select existing)",
                         all_unique_metadata_keys,
                         index=all_unique_metadata_keys.index(
-                            meta_entry['_selected_from_list_key']) if meta_entry['_selected_from_list_key'] in all_unique_metadata_keys else 0,
+                            meta_entry['_selected_from_list_key']) if meta_entry[
+                                                                          '_selected_from_list_key'] in all_unique_metadata_keys else 0,
                         placeholder="Choose from existing keys...",
                         key=f"{selected_transaction_type}_meta_key_selectbox_{i}"
                     )
@@ -461,6 +592,17 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
             if submitted:
                 is_valid = True
 
+                # --- NEW VALIDATION: Check payee decision for ambiguous cases ---
+                # Only apply this check if it's an Expense/Income transaction AND an ambiguous suggestion was made
+                # and the decision hasn't been explicitly made by the user yet.
+                if selected_transaction_type in ["Expense", "Income"] and st.session_state.get(
+                        'payee_suggestion_result'):
+                    if st.session_state.payee_suggestion_result[
+                        'status'] == 'AMBIGUOUS' and not st.session_state.payee_decision_made:
+                        st.error("Please confirm or reject the suggested payee before saving.")
+                        is_valid = False
+                # --- END NEW VALIDATION ---
+
                 if not st.session_state.global_transaction_data['payee']:
                     st.error("Overall Payer/Payee is required.")
                     is_valid = False
@@ -480,7 +622,8 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                     if key and value:  # Only add if both key and value are non-empty
                         cleaned_metadata.append({'key': key, 'value': value})
                     elif key or value:  # If one is present but not the other
-                        st.warning(f"Metadata field found with only a key or a value (Key: '{key}', Value: '{value}'). Ignoring incomplete entry.")
+                        st.warning(
+                            f"Metadata field found with only a key or a value (Key: '{key}', Value: '{value}'). Ignoring incomplete entry.")
 
                 # Assign cleaned metadata back to session state to reflect what will be saved
                 st.session_state.global_transaction_data['manual_metadata'] = cleaned_metadata
@@ -493,7 +636,8 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                         st.error(f"Split {i + 1}: Description is required.")
                         is_valid = False
                     # Check if full_budget_path is not just the scope
-                    if not split_data['full_budget_path'] or split_data['full_budget_path'].count(':') < 1:  # Ensure at least Scope:Category
+                    if not split_data['full_budget_path'] or split_data['full_budget_path'].count(
+                            ':') < 1:  # Ensure at least Scope:Category
                         st.error(f"Split {i + 1}: A specific category path (e.g., Scope:Category) is required.")
                         is_valid = False
 
@@ -516,7 +660,7 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                                 'amount': split_data['amount'],
                                 'description': split_data['description'],
                                 'notes': split_data['notes'],
-                                'payee': st.session_state.global_transaction_data['payee'],
+                                'payee': st.session_state.global_transaction_data['payee'],  # Pass the conformed payee
                                 'account': st.session_state.global_transaction_data['account'],
                                 'budget_scope': split_data['budget_scope'],
                                 'category': split_data['category'],
@@ -529,7 +673,7 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                             transaction_id=st.session_state.current_transaction_id,
                             transaction_type=selected_transaction_type,
                             date=st.session_state.global_transaction_data['date'],
-                            payee=st.session_state.global_transaction_data['payee'],
+                            payee=st.session_state.global_transaction_data['payee'],  # Pass the conformed payee
                             account=st.session_state.global_transaction_data['account'],
                             uploaded_file=uploaded_file,
                             splits=splits_for_manager,
@@ -548,6 +692,11 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                             'date': datetime.date.today(), 'payee': '', 'account': '', 'uploaded_file': None,
                             'manual_metadata': []  # Reset metadata after successful submission
                         }
+                        # Clear payee suggestion/decision state
+                        st.session_state.payee_suggestion_result = None
+                        st.session_state.payee_decision_made = True
+                        st.session_state.raw_payee_input_original = ''
+
                         # Clear category selector state for transfer
                         for key in list(st.session_state.keys()):
                             if '_cat_ui' in key:
@@ -583,7 +732,8 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
             # This ensures a default path like 'Transfer:Transfer' is pre-selected if available
             if 'Transfer' in structured_categories:
                 st.session_state['transfer_cat_ui_budget_scope'] = "Transfer"
-                st.session_state['transfer_cat_ui_category_path_elements'] = ["Transfer", "Transfer"]  # Default to Transfer:Transfer
+                st.session_state['transfer_cat_ui_category_path_elements'] = ["Transfer",
+                                                                              "Transfer"]  # Default to Transfer:Transfer
                 st.session_state['transfer_cat_ui_full_budget_path'] = "Transfer:Transfer"
             else:  # Fallback if 'Transfer' scope is not defined in financial_config
                 st.session_state['transfer_cat_ui_budget_scope'] = ""
@@ -663,9 +813,12 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
             st.session_state.transfer_data['full_budget_path'] = current_full_path_transfer
 
             full_path_parts_transfer = current_full_path_transfer.split(':')
-            st.session_state.transfer_data['budget_scope'] = full_path_parts_transfer[0] if len(full_path_parts_transfer) > 0 else ""
-            st.session_state.transfer_data['category'] = full_path_parts_transfer[1] if len(full_path_parts_transfer) > 1 else ""
-            st.session_state.transfer_data['sub_category'] = full_path_parts_transfer[2] if len(full_path_parts_transfer) > 2 else ""
+            st.session_state.transfer_data['budget_scope'] = full_path_parts_transfer[0] if len(
+                full_path_parts_transfer) > 0 else ""
+            st.session_state.transfer_data['category'] = full_path_parts_transfer[1] if len(
+                full_path_parts_transfer) > 1 else ""
+            st.session_state.transfer_data['sub_category'] = full_path_parts_transfer[2] if len(
+                full_path_parts_transfer) > 2 else ""
 
         # --- Additional Metadata Section for Transfers ---
         # Initialize manual_metadata_entries if not present, including a placeholder for selected key
@@ -693,7 +846,8 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                         "Metadata Key (Select existing)",
                         all_unique_metadata_keys,
                         index=all_unique_metadata_keys.index(
-                            meta_entry['_selected_from_list_key']) if meta_entry['_selected_from_list_key'] in all_unique_metadata_keys else 0,
+                            meta_entry['_selected_from_list_key']) if meta_entry[
+                                                                          '_selected_from_list_key'] in all_unique_metadata_keys else 0,
                         placeholder="Choose from existing keys...",
                         key=f"transfer_meta_key_selectbox_{i}"
                     )
@@ -747,8 +901,10 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                     is_valid = False
                 # Validate the selected transfer path
                 elif not st.session_state.transfer_data['full_budget_path'] or \
-                        st.session_state.transfer_data['full_budget_path'].count(':') < 1:  # Ensure at least Scope:Category
-                    st.error("A valid budget path (e.g., 'Transfer:Transfer' or 'Personal:Savings') is required for transfers.")
+                        st.session_state.transfer_data['full_budget_path'].count(
+                            ':') < 1:  # Ensure at least Scope:Category
+                    st.error(
+                        "A valid budget path (e.g., 'Transfer:Transfer' or 'Personal:Savings') is required for transfers.")
                     is_valid = False
 
                 # Validate metadata entries
@@ -759,7 +915,8 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                     if key and value:  # Only add if both key and value are non-empty
                         cleaned_metadata.append({'key': key, 'value': value})
                     elif key or value:  # If one is present but not the other
-                        st.warning(f"Metadata field found with only a key or a value (Key: '{key}', Value: '{value}'). Ignoring incomplete entry.")
+                        st.warning(
+                            f"Metadata field found with only a key or a value (Key: '{key}', Value: '{value}'). Ignoring incomplete entry.")
 
                 # Assign cleaned metadata back to session state to reflect what will be saved
                 st.session_state.global_transaction_data['manual_metadata'] = cleaned_metadata
@@ -810,7 +967,8 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
 
                         # Reset form fields and session state after successful submission
                         st.session_state.transfer_data = {
-                            'date': datetime.date.today(), 'amount': 0.0, 'source_account': '', 'destination_account': '',
+                            'date': datetime.date.today(), 'amount': 0.0, 'source_account': '',
+                            'destination_account': '',
                             'description': '', 'notes': '',
                             'budget_scope': '', 'category': '', 'sub_category': '',
                             'full_budget_path': ''
@@ -819,9 +977,14 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                             'date': datetime.date.today(), 'payee': '', 'account': '', 'uploaded_file': None,
                             'manual_metadata': []  # Reset metadata after successful submission
                         }
+                        # Clear payee suggestion/decision state
+                        st.session_state.payee_suggestion_result = None
+                        st.session_state.payee_decision_made = True
+                        st.session_state.raw_payee_input_original = ''
+
                         # Clear category selector state for transfer
                         for key in list(st.session_state.keys()):
-                            if 'transfer_cat_ui' in key:
+                            if '_cat_ui' in key:
                                 del st.session_state[key]
                         # Reset the metadata input fields by clearing their session state
                         if 'manual_metadata_entries' in st.session_state:
