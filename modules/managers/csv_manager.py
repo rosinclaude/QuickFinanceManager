@@ -261,7 +261,7 @@ class CSVManager:
 
     def save_metadata(self, df: pd.DataFrame):  # NEW METHOD
         """Saves metadata to the CSV file."""
-        df['TimestampAdded'] = df['TimestampAdded'].apply(lambda x: x.isoformat() if x is not None else '')
+        df['TimestampAdded'] = pd.to_datetime(df['TimestampAdded']).apply(lambda x: x.isoformat() if x is not None else '')
         try:
             df.to_csv(self.metadata_csv_path, index=False)
             print(f"Metadata saved to {self.metadata_csv_path}")
