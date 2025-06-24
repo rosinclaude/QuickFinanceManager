@@ -387,7 +387,12 @@ class FinanceConfigManager:
     def get_currency_symbol(self) -> str:
         return self._config.get('currency_symbol', '$')
 
-    def get_currency(self) -> str:
+    def get_currency(self, selected_account_name: str = '') -> str:
+        if selected_account_name:
+            for account_sections in [section for section in self._config.keys() if 'accounts' in section]:  # 'accounts' for future proofing
+                for account_name, account_details in self._config[account_sections].items():
+                    if account_details['name'] == selected_account_name:
+                        return account_details.get('currency', self._config.get('currency', 'CAD'))
         return self._config.get('currency', 'CAD')
 
     def get_all_account_names(self) -> List[str]:
