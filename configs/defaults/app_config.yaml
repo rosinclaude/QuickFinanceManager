@@ -5,9 +5,10 @@ paths:
   # Paths relevant to financial configuration files
   default_config_dir: 'configs/defaults/'
   monthly_config_dir: 'configs/monthly/'
-  default_finance_config_file: 'financial_config_default.yaml'
+#  default_finance_config_file: 'financial_config_default.yaml'
+  default_finance_config_file: 'financial_config_good-complete.yaml'
   # Path for vendor patterns configuration
-  vendor_patterns_file: 'configs/vendor_patterns.yaml'
+  vendor_patterns_file: 'configs/defaults/vendor_patterns.yaml'
   # Paths for primary CSV data storage
   transactions_csv_file: 'data/transactions.csv'
   payees_csv_file: 'data/payees.csv'
@@ -22,6 +23,7 @@ paths:
 llm_config:
   vendor_fuzzy_match_model: 'all-MiniLM-L6-v2'        # Model for semantic similarity (e.g., SentenceTransformer)
   vendor_fuzzy_match_threshold: 0.85                  # Similarity threshold (0.0 to 1.0)
+  vendor_fuzzy_match_ambiguity_threshold: 0.3       # NEW: Below this, it's 'NO_MATCH'. Between this and vendor_fuzzy_match_threshold, it's 'AMBIGUOUS'.
   categorization_llm_model: 'dummy-llm'               # Placeholder for actual LLM (e.g., 'gemini-pro', 'gpt-3.5-turbo')
   categorization_llm_api_key_env_var: 'GEMINI_API_KEY' # Environment variable name for API key
   categorization_llm_temperature: 0.1                 # Controls randomness in LLM output (0.0 to 1.0)
