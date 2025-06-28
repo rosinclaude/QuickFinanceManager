@@ -109,6 +109,6 @@ class MetadataManager:
         Retrieves all unique metadata keys from the metadata.csv file.
         This function is cached to avoid re-reading the CSV on every rerun.
         """
-        if not self._metadata_df.empty and 'MetadataKey' in self._metadata_df.columns:
-            return sorted(self._metadata_df['MetadataKey'].dropna().unique().tolist())
+        if not self._metadata_df.empty and 'Key' in self._metadata_df.columns:
+            return sorted(self._metadata_df['Key'].dropna().unique().tolist())
         return []
