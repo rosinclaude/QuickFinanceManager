@@ -1,4 +1,5 @@
 # modules/managers/payee_manager.py
+import uuid
 
 import pandas as pd
 import datetime
@@ -33,6 +34,7 @@ class PayeeManager:
         Adds a new payee to the internal DataFrame and persists it to CSV if it's not already present
         and not identified as an internal account.
         """
+        # TODO: save and extract from databases.
         if not new_payee_name:
             print("Attempted to add empty payee name. Skipping.")
             return
@@ -59,8 +61,10 @@ class PayeeManager:
             return
 
         if new_payee_name not in self._payees_df['Name'].values:
+            payee_id = f"PRN-{int(datetime.datetime.now().timestamp())}-{uuid.uuid4().hex[:6].upper()}"
             print(f"Adding new payee: {new_payee_name}")
             new_payee_data = {
+                "PayeeId": payee_id,
                 "Name": new_payee_name,
                 "Aliases": "",
                 "DefaultCategory": "",
@@ -85,3 +89,6 @@ class PayeeManager:
             self.csv_manager.save_payees(self._payees_df)
         else:
             print(f"Payee '{new_payee_name}' already exists. Not adding.")
+            payee_id = self._payees_df.loc[self._payees_df['Name'] == new_payee_name]['PayeeId'].values[0]
+
+        return payee_id # GET the uuid and return it.
