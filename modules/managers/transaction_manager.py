@@ -165,8 +165,9 @@ class TransactionManager:
                 if effective_payee:
                     # Ensure this effective_payee for the split is also added to the payee DB.
                     # No fuzzy matching here, as this is the result of UI conformation.
-                    self.payee_manager.add_payee(effective_payee)
+                    effective_payee_uuid = self.payee_manager.add_payee(effective_payee)
 
+                # TODO: update this part to get the account uuid, so that it will be easier to move to databases.
                 effective_account = split.get('account', account)
                 currency = self.config_manager.get_currency(effective_account)
 
@@ -175,7 +176,7 @@ class TransactionManager:
                     category_suggestions = self.hybrid_categorizer.suggest_category(
                         description=split_description,
                         current_notes=split_notes,
-                        payee=effective_payee, # Use the conformed/effective payee
+                        payee=effective_payee, # Use the conformed/effective payee uuid
                         account=effective_account,
                         transaction_type=transaction_type  # Pass transaction type
                     )
@@ -194,13 +195,13 @@ class TransactionManager:
                         'Confidence': 1.0,
                         'Source': 'Manual'
                     }
-
+                # TODO: Update this part to get data from the budget database ?
                 new_transaction = {
                     "TransactionID": transaction_id,
                     "SplitIndex": i,
                     "Date": date,
                     "Time": datetime.datetime.now().strftime("%H:%M:%S"),
-                    "Payer/Payee": effective_payee,
+                    "Payer/Payee": effective_payee_uuid,
                     "Account": effective_account,
                     "Description": split_description,
                     "Amount": split_amount,
@@ -224,7 +225,7 @@ class TransactionManager:
                     "TimestampAdded": datetime.datetime.now()
                 }
                 transactions_to_add.append(new_transaction)
-
+            # TODO: Update these parts below to do the save in database.
             transactions_df = self.csv_manager.load_transactions()
             new_df = pd.DataFrame(transactions_to_add)
             updated_df = pd.concat([transactions_df, new_df], ignore_index=True)
@@ -281,7 +282,7 @@ class TransactionManager:
                 self.payee_manager.add_payee(conform_payee)
 
             # Determine main transaction type (usually Expense for invoices, but can be customized)
-            main_transaction_type = "Expense"
+            main_transaction_type = "Expense"  # TODO: Update to match the given invoice
 
             # Auto-Categorize Splits using the HybridCategorizer
             for split in parsed_invoice_data['splits']:
