@@ -431,7 +431,9 @@ def display_single_transaction_tab(transaction_manager: TransactionManager, conf
     )
 
     col_process, col_save = st.columns([1, 1])
-
+    # TODO: Update to save the invoice path.
+    # TODO: Update the csv manager to connect to a database. Update all manager to use database, and thus, foreignkeys and so on.
+    # TODO: Update the transaction manager to use the payee uuid instead of direct name.
     with col_process:
         # Process button
         if st.button("Process Invoice", key="process_invoice_btn", disabled=not (
