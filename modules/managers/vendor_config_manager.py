@@ -1,4 +1,5 @@
 # modules/managers/vendor_config_manager.py
+# TODO: save and extract from databases.
 
 import yaml
 import os
