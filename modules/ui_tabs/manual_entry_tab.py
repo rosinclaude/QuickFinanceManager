@@ -7,7 +7,7 @@ from typing import Dict, List, Any, Optional
 import pandas as pd
 
 from modules.managers.transaction_manager import TransactionManager
-from modules.managers.finance_config_manager import FinanceConfigManager
+from modules.managers.finance_config_manager import MonthlyFinanceConfigManager
 from modules.managers.payee_manager import PayeeManager
 from modules.managers.app_config_manager import AppConfigManager
 from modules.managers.csv_manager import CSVManager
@@ -19,9 +19,9 @@ from modules.managers.metadata_manager import MetadataManager
 
 # --- Helper Functions for UI Reusability ---
 
-def _get_account_options(config_manager: FinanceConfigManager) -> list:
+def _get_account_options(monthly_finance_config_manager: MonthlyFinanceConfigManager) -> list:
     """Returns a list of account display strings for selectboxes."""
-    all_accounts_with_types = config_manager.get_all_accounts_with_types()
+    all_accounts_with_types = monthly_finance_config_manager.get_all_accounts_with_types()
     return [f"{name} ({type})" for name, type in all_accounts_with_types]
 
 
@@ -30,9 +30,9 @@ def _get_account_name_from_display(display_string: str) -> str | None:
     return display_string.split(' (')[0] if display_string else None
 
 
-def _get_account_type_for_display(account_name: str, config_manager: FinanceConfigManager) -> str:
+def _get_account_type_for_display(account_name: str, monthly_finance_config_manager: MonthlyFinanceConfigManager) -> str:
     """Helper to get the type of an account for display purposes."""
-    all_accounts = config_manager.get_all_accounts_with_types()
+    all_accounts = monthly_finance_config_manager.get_all_accounts_with_types()
     for name, type_name in all_accounts:
         if name == account_name:
             return type_name
@@ -337,7 +337,7 @@ def _populate_form_from_extracted_data(extracted_data: Dict[str, Any]):
     st.rerun()  # Trigger a rerun to display the pre-filled data
 
 
-def display_single_transaction_tab(transaction_manager: TransactionManager, config_manager: FinanceConfigManager,
+def display_single_transaction_tab(transaction_manager: TransactionManager, monthly_finance_config_manager: MonthlyFinanceConfigManager,
                                    app_config_manager: AppConfigManager):
     """
     Displays the UI for entering a single transaction, with optional invoice automation.
@@ -345,10 +345,10 @@ def display_single_transaction_tab(transaction_manager: TransactionManager, conf
     st.header("Enter Transaction Details")
 
     display_currency_symbol = app_config_manager.get_app_settings().get('display_currency_symbol_on_amount', True)
-    currency_symbol = config_manager.get_currency_symbol() if display_currency_symbol else ""
+    currency_symbol = monthly_finance_config_manager.get_currency_symbol() if display_currency_symbol else ""
 
-    account_options = _get_account_options(config_manager)
-    structured_categories = config_manager.get_all_categories_recursive()
+    account_options = _get_account_options(monthly_finance_config_manager)
+    structured_categories = monthly_finance_config_manager.get_all_categories_recursive()
 
     transaction_types = ["Expense", "Income", "Transfer"]
 
@@ -631,7 +631,7 @@ def display_single_transaction_tab(transaction_manager: TransactionManager, conf
         st.write("Category for this split:")
 
         if selected_transaction_type == "Expense":
-            scope_opts = [s for s in config_manager.get_all_budget_scopes() if s != 'Income']
+            scope_opts = [s for s in monthly_finance_config_manager.get_all_budget_scopes() if s != 'Income']
         elif selected_transaction_type == "Income":
             scope_opts = ['Income']
         else:
