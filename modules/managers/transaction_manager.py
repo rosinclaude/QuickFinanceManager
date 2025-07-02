@@ -43,9 +43,9 @@ class TransactionManager:
         self.app_config = app_config  # Store app_config
 
         # Paths from app_config for I/O operations
-        self.input_raw_dir = self.app_config['paths']['invoice_input_dir']
-        self.input_processed_dir = self.app_config['paths']['invoice_processed_dir']
-        self.input_failed_dir = self.app_config['paths']['invoice_failed_dir']
+        self.input_raw_dir = self.app_config.get('paths', {}).get('invoice_input_dir', 'data/invoices/input')
+        self.input_processed_dir = self.app_config.get('paths', {}).get('invoice_processed_dir', 'data/invoices/processed')
+        self.input_failed_dir = self.app_config.get('paths', {}).get('invoice_failed_dir', 'data/invoices/failed')
 
         # VendorConfigManager initialization, passing relevant app_config parts including new ambiguity threshold
         llm_config = self.app_config.get('llm_config', {})
