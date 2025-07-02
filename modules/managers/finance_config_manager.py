@@ -411,9 +411,57 @@ class MonthlyFinanceConfigManager:
         # In the new config, budget_scopes is a list of strings directly
         return self._config.get('budget_scopes', [])
 
-    def get_income_categories(self) -> List[str]:
+    def get_income_categories(self, as_dict=False) -> List[str] | Dict[str, Any]:
         """Returns a list of all defined income categories."""
+        if as_dict:
+            return self._config.get('income_categories', {})
         return list(self._config.get('income_categories', {}).keys())
+
+    def get_income_budget_paths(self) -> List[str]:
+        """
+        Generates a flat list of all hierarchical income budget paths.
+        Example: ['Salary_Primary', 'Freelance::Web_Design']
+        """
+        paths = []
+        income_cats = self.get_income_categories(as_dict=True)
+        for cat, details in income_cats.items():
+            # For income, assume top-level is the path unless subcategories exist (uncommon but possible)
+            if 'subcategories' in details and details['subcategories']:
+                for sub_cat in details['subcategories']:
+                    paths.append(f"{cat}::{sub_cat}")
+            else:
+                paths.append(cat)
+        return sorted(paths)
+
+    def get_expense_budget_paths(self) -> List[str]:
+        """
+        Generates a flat list of all hierarchical expense budget paths including scopes.
+        Example: ['Family::Groceries::Food', 'Personal::Hobbies_Recreation', 'Personal::Businesses::Photography_Business::Equipment']
+        """
+        paths = []
+        budget_scopes = self.get_all_budget_scopes()
+
+        for scope in budget_scopes:
+            if scope in self._config and 'budget' in self._config[scope]:
+                for category, cat_details in self._config[scope]['budget'].items():
+                    full_category_path = f"{scope}::{category}"
+
+                    # Handle nested business budgets under 'Personal::Businesses'
+                    if scope == 'Personal' and category == 'Businesses' and 'budget' in cat_details:
+                        for business_name, business_details in cat_details['budget'].items():
+                            full_business_path = f"{full_category_path}::{business_name}"
+                            if 'budget' in business_details and business_details['budget']:
+                                for sub_category in business_details['budget'].keys():
+                                    paths.append(f"{full_business_path}::{sub_category}")
+                            else:
+                                paths.append(full_business_path) # If a business doesn't have sub-budget directly add it
+                    elif 'budget' in cat_details and cat_details['budget']:
+                        for sub_category in cat_details['budget'].keys():
+                            paths.append(f"{full_category_path}::{sub_category}")
+                    else:
+                        paths.append(full_category_path) # Add category if no further sub-budget
+
+        return sorted(paths)
 
     def _build_full_budget_paths(self) -> List[str]:
         """
