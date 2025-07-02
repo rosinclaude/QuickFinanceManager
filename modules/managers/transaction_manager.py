@@ -246,6 +246,93 @@ class TransactionManager:
             print(f"Error in add_manual_transaction: {e}")
             raise
 
+    def get_all_transactions(self) -> pd.DataFrame:
+        """
+        Retrieves all transactions currently loaded.
+        Returns:
+            pd.DataFrame: A DataFrame containing all transactions.
+        """
+        return self.csv_manager.load_transactions().copy()
+
+    def update_transaction(self, transaction_id: str, split_index: int, updated_data: Dict[str, Any],
+                           updated_metadata_entries: Optional[List[Dict[str, Any]]] = None) -> bool:
+        """
+        Updates an existing transaction split in the DataFrame and saves changes.
+        Args:
+            transaction_id (str): The ID of the transaction to update.
+            split_index (int): The index of the split within the transaction to update.
+            updated_data (Dict[str, Any]): A dictionary of updated transaction details for the specific split.
+            updated_metadata_entries (Optional[List[Dict[str, Any]]]): A list of dictionaries for metadata updates.
+        Returns:
+            bool: True if the transaction was updated successfully, False otherwise.
+        """
+        transactions_df = self.csv_manager.load_transactions()
+        # Find the row(s) to update
+        row_index = transactions_df[(transactions_df['TransactionID'] == transaction_id) &
+                                    (transactions_df['SplitIndex'] == split_index)].index
+
+        if row_index.empty:
+            print(f"Transaction ID {transaction_id} with SplitIndex {split_index} not found for update.")
+            return False
+
+        # Update core transaction fields
+        for key, value in updated_data.items():
+            if key == 'date':
+                transactions_df.loc[row_index, 'Date'] = value.isoformat() if isinstance(value, datetime.date) else value
+            elif key == 'budget_path_display':
+                # Reconstruct BudgetScope, BudgetCategory, BudgetSubCategory from budget_path_display
+                parts = value.split('::')
+                transactions_df.loc[row_index, 'BudgetScope'] = parts[0] if len(parts) > 0 else ''
+                transactions_df.loc[row_index, 'BudgetCategory'] = parts[1] if len(parts) > 1 else ''
+                # Handle subcategory if needed, assuming it's the last part if more than 2
+                transactions_df.loc[row_index, 'BudgetSubCategory'] = parts[2] if len(parts) > 2 else ''
+            elif key in transactions_df.columns:
+                transactions_df.loc[row_index, key] = value
+            # else: print(f"Warning: Attempted to update non-existent column or special handling for {key}")
+
+        transactions_df.loc[row_index, 'LastModified'] = datetime.datetime.now().isoformat()
+
+        # Handle metadata updates: For simplicity, delete existing and re-add.
+        # More robust approach would be to compare and update/add/delete individually.
+        if updated_metadata_entries:
+            self.metadata_manager.delete_metadata_for_transaction_split(transaction_id, split_index)
+            self.metadata_manager.add_metadata_entries(transaction_id, updated_metadata_entries,
+                                                       source=updated_metadata_entries[0].get('source', 'Manual Edit'),
+                                                       split_index=split_index)
+            # for metadata in updated_metadata_entries:
+            #     self.metadata_manager.add_metadata_entry(
+            #         transaction_id=transaction_id,
+            #         split_index=split_index,
+            #         key=metadata['key'],
+            #         value=metadata['value'],
+            #         source=metadata.get('source', 'Manual Edit')
+            #     )
+
+        self.csv_manager.save_transactions(transactions_df)
+        print(f"Transaction {transaction_id} (Split {split_index}) updated successfully.")
+        return True
+
+    def delete_transaction(self, transaction_id: str) -> bool:
+        """
+        Deletes a transaction (all its splits) from the DataFrame and saves changes.
+        Args:
+            transaction_id (str): The ID of the transaction to delete.
+        Returns:
+            bool: True if the transaction was deleted successfully, False otherwise.
+        """
+        transactions_df = self.csv_manager.load_transactions()
+        initial_row_count = len(transactions_df)
+        transactions_df = transactions_df[transactions_df['TransactionID'] != transaction_id].reset_index(drop=True)
+
+        if len(transactions_df) < initial_row_count:
+            self.csv_manager.save_transactions(transactions_df)
+            self.metadata_manager.delete_metadata_for_transaction(transaction_id)  # Delete associated metadata
+            print(f"Transaction {transaction_id} and its associated metadata deleted successfully.")
+            return True
+        else:
+            print(f"Transaction {transaction_id} not found for deletion.")
+            return False
+
     def process_uploaded_invoice(self, uploaded_file) -> Dict[str, Any]:
         """
         Processes an uploaded invoice image, performs OCR, parses data,

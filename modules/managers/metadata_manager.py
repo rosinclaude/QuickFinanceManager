@@ -83,6 +83,44 @@ class MetadataManager:
         else:
             print("No valid metadata entries to add.")
 
+    def delete_metadata_entry(self, metadata_id: str):
+        """Deletes a metadata entry by its MetadataID."""
+        initial_len = len(self._metadata_df)
+        self._metadata_df = self._metadata_df[self._metadata_df['MetadataID'] != metadata_id].reset_index(drop=True)
+        if len(self._metadata_df) < initial_len:
+            self.csv_manager.save_metadata(self._metadata_df)
+            print(f"Metadata ID {metadata_id} deleted.")
+        else:
+            print(f"Metadata ID {metadata_id} not found.")
+
+    def delete_metadata_for_transaction(self, transaction_id: str):
+        """
+        Deletes all metadata entries associated with a given TransactionID.
+        """
+        initial_len = len(self._metadata_df)
+        self._metadata_df = self._metadata_df[self._metadata_df['TransactionID'] != transaction_id].reset_index(
+            drop=True)
+        if len(self._metadata_df) < initial_len:
+            self.csv_manager.save_metadata(self._metadata_df)
+            print(f"All metadata for Transaction {transaction_id} deleted.")
+        else:
+            print(f"No metadata found for Transaction {transaction_id} to delete.")
+
+    def delete_metadata_for_transaction_split(self, transaction_id: str, split_index: int):
+        """
+        Deletes metadata entries for a specific transaction split.
+        """
+        initial_len = len(self._metadata_df)
+        self._metadata_df = self._metadata_df[
+            ~((self._metadata_df['TransactionID'] == transaction_id) & (self._metadata_df['SplitIndex'] == split_index))
+        ].reset_index(drop=True)
+
+        if len(self._metadata_df) < initial_len:
+            self.csv_manager.save_metadata(self._metadata_df)
+            print(f"Metadata for Transaction {transaction_id} Split {split_index} deleted.")
+        else:
+            print(f"No metadata found for Transaction {transaction_id} Split {split_index} to delete.")
+
     def update_metadata_entry(self, metadata_id: str, new_value: Any):
         """Updates the value of an existing metadata entry by its MetadataID."""
         idx = self._metadata_df[self._metadata_df['MetadataID'] == metadata_id].index
@@ -112,3 +150,11 @@ class MetadataManager:
         if not self._metadata_df.empty and 'Key' in self._metadata_df.columns:
             return sorted(self._metadata_df['Key'].dropna().unique().tolist())
         return []
+
+    def get_all_metadata(self) -> pd.DataFrame:
+        """
+        Retrieves all metadata entries.
+        Returns:
+            pd.DataFrame: A DataFrame containing all metadata.
+        """
+        return self._metadata_df.copy()
