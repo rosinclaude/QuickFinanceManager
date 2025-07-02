@@ -6,7 +6,7 @@ import shutil
 import datetime
 from .budget_manager import BudgetManager  # Assuming this exists and is correctly implemented
 
-class FinanceConfigManager:
+class MonthlyFinanceConfigManager:
     """
     Manages loading and providing access to the financial configuration from YAML files.
     Prioritizes monthly configurations, falling back to a default template.

@@ -7,7 +7,7 @@ import uuid
 import os
 
 from .csv_manager import CSVManager
-from .finance_config_manager import FinanceConfigManager
+from .finance_config_manager import MonthlyFinanceConfigManager
 from .payee_manager import PayeeManager
 from .metadata_manager import MetadataManager
 from modules.automation.ocr_processor import OCRProcessor
@@ -24,20 +24,20 @@ class TransactionManager:
     and integrates with other managers for configuration, payees, and automation.
     """
 
-    def __init__(self, csv_manager: CSVManager, finance_config_manager: FinanceConfigManager,
+    def __init__(self, csv_manager: CSVManager, monthly_finance_config_manager: MonthlyFinanceConfigManager,
                  payee_manager: PayeeManager, metadata_manager: MetadataManager,
                  app_config: Dict[str, Any]):  # Accept app_config here
         """
         Initializes the TransactionManager.
         Args:
             csv_manager (CSVManager): An instance of CSVManager to handle data I/O.
-            finance_config_manager (FinanceConfigManager): An instance of FinanceConfigManager to access financial configuration.
+            monthly_finance_config_manager (MonthlyFinanceConfigManager): An instance of FinanceConfigManager to access financial configuration.
             payee_manager (PayeeManager): An instance of PayeeManager to manage payee data.
             metadata_manager (MetadataManager): An instance of MetadataManager to store extra transaction details.
             app_config (Dict[str, Any]): The loaded application configuration dictionary.
         """
         self.csv_manager = csv_manager
-        self.config_manager = finance_config_manager  # Renamed for consistency with self.config_manager
+        self.monthly_finance_config_manager = monthly_finance_config_manager  # Renamed for consistency with self.config_manager
         self.payee_manager = payee_manager
         self.metadata_manager = metadata_manager
         self.app_config = app_config  # Store app_config
@@ -65,11 +65,11 @@ class TransactionManager:
         )
 
         # InvoiceParser initialization (already takes config_manager and vendor_config_manager)
-        self.invoice_parser = InvoiceParser(config_manager=self.config_manager,
+        self.invoice_parser = InvoiceParser(monthly_finance_config_manager=self.monthly_finance_config_manager,
                                             vendor_config_manager=self.vendor_config_manager)
 
         # HybridCategorizer initialization, passing finance_config_manager and app_config
-        self.hybrid_categorizer = HybridCategorizer(config_manager=self.config_manager,
+        self.hybrid_categorizer = HybridCategorizer(monthly_finance_config_manager=self.monthly_finance_config_manager,
                                                     app_config=self.app_config)
 
         # MLCategorizerTrainer initialization, passing app_config
@@ -169,7 +169,7 @@ class TransactionManager:
 
                 # TODO: update this part to get the account uuid, so that it will be easier to move to databases.
                 effective_account = split.get('account', account)
-                currency = self.config_manager.get_currency(effective_account)
+                currency = self.monthly_finance_config_manager.get_currency(effective_account)
 
                 # If category is not explicitly provided (e.g., from manual input UI), categorize
                 if not split_full_budget_path or split_full_budget_path == 'Uncategorized:Unassigned':

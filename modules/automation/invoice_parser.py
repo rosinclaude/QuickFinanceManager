@@ -5,22 +5,22 @@ import datetime
 import importlib
 from typing import Dict, List, Any, Optional, Tuple
 
-from modules.managers.finance_config_manager import FinanceConfigManager
+from modules.managers.finance_config_manager import MonthlyFinanceConfigManager
 from modules.managers.vendor_config_manager import VendorConfigManager
 from modules.automation.vendor_parsers.base_vendor_parser import BaseVendorParser
 
 
 class InvoiceParser:
-    def __init__(self, config_manager: FinanceConfigManager,
+    def __init__(self, monthly_finance_config_manager: MonthlyFinanceConfigManager,
                  vendor_config_manager: VendorConfigManager):
         """
         Initializes the InvoiceParser.
 
         Args:
-            config_manager (FinanceConfigManager): An instance of FinanceConfigManager.
+            monthly_finance_config_manager (MonthlyFinanceConfigManager): An instance of FinanceConfigManager.
             vendor_config_manager (VendorConfigManager): An instance of VendorConfigManager.
         """
-        self.config_manager = config_manager
+        self.config_manager = monthly_finance_config_manager
         self.vendor_config_manager = vendor_config_manager
         self.currency_symbol = self.config_manager.get_currency_symbol()
         self.currency_code = self.config_manager.get_currency()
