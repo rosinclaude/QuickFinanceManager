@@ -43,6 +43,12 @@ class PayeeManager:
             return result['Name'].iloc[0]
         return None
 
+    def get_all_payees_payers(self):
+        """
+        Returns a copy of the payee/payer data
+        """
+        return self._payees_df.copy()
+
     def add_payee(self, new_payee_name: str, is_subscription: bool = False, notes: str = ""):
         """
         Adds a new payee to the internal DataFrame and persists it to CSV if it's not already present
