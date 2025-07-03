@@ -1,5 +1,6 @@
 # modules/managers/payee_manager.py
 import uuid
+from typing import Optional
 
 import pandas as pd
 import datetime
@@ -28,6 +29,19 @@ class PayeeManager:
         Returns a sorted list of all unique payee names currently known.
         """
         return self._unique_payee_names
+
+    def get_payee_name_by_id(self, payee_id: str) -> Optional[str]:
+        """
+        Retrieves the payee name given its UUID.
+        Returns None if the payee ID is not found.
+        """
+        if self._payees_df.empty:
+            return None
+
+        result = self._payees_df[self._payees_df['PayeeId'] == payee_id]
+        if not result.empty:
+            return result['Name'].iloc[0]
+        return None
 
     def add_payee(self, new_payee_name: str, is_subscription: bool = False, notes: str = ""):
         """
