@@ -433,6 +433,7 @@ class MonthlyFinanceConfigManager:
                 paths.append(cat)
         return sorted(paths)
 
+    # TODO: update here to be more generic.
     def get_expense_budget_paths(self) -> List[str]:
         """
         Generates a flat list of all hierarchical expense budget paths including scopes.

@@ -9,7 +9,7 @@ startup.initialize_session_state()
 startup.perform_initial_checks()
 
 # Access ConfigManager and other session state variables initialized by startup.py
-config_manager = st.session_state.config_manager
+config_manager = st.session_state.monthly_finance_config_manager
 
 
 # --- Helper Functions for UI ---

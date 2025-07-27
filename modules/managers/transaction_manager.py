@@ -7,7 +7,7 @@ import uuid
 import os
 
 from .csv_manager import CSVManager
-from .finance_config_manager import MonthlyFinanceConfigManager
+from .finance_config_manager import MonthlyFinanceConfigManager # Corrected import
 from .payee_manager import PayeeManager
 from .metadata_manager import MetadataManager
 from modules.automation.ocr_processor import OCRProcessor
@@ -142,7 +142,10 @@ class TransactionManager:
             # The 'payee' received here is already the conformed/user-confirmed name from the UI.
             # Just ensure it exists in the payee database.
             if payee:
-                self.payee_manager.add_payee(payee) # Add this confirmed payee to the database
+                # Get the UUID for the payee (add if new)
+                payee_uuid = self.payee_manager.add_payee(payee)
+            else:
+                payee_uuid = None # Or handle error if payee is mandatory
 
             transaction_metadata_entries = []
             if manual_metadata:
@@ -162,10 +165,13 @@ class TransactionManager:
                 # Effective payee for the split is also expected to be conformed.
                 # It can default to the overall transaction payee if not specified in the split data.
                 effective_payee = split.get('payee', payee)
+                effective_payee_uuid = None
                 if effective_payee:
                     # Ensure this effective_payee for the split is also added to the payee DB.
                     # No fuzzy matching here, as this is the result of UI conformation.
                     effective_payee_uuid = self.payee_manager.add_payee(effective_payee)
+                else:
+                    effective_payee_uuid = payee_uuid # Fallback to main transaction payee UUID
 
                 # TODO: update this part to get the account uuid, so that it will be easier to move to databases.
                 effective_account = split.get('account', account)
@@ -175,8 +181,8 @@ class TransactionManager:
                 if not split_full_budget_path or split_full_budget_path == 'Uncategorized:Unassigned':
                     category_suggestions = self.hybrid_categorizer.suggest_category(
                         description=split_description,
-                        current_notes=split_notes,
-                        payee=effective_payee, # Use the conformed/effective payee uuid
+                        current_notes=split_notes, # Use split's notes for categorization
+                        payee=effective_payee, # Use the conformed/effective payee name
                         account=effective_account,
                         transaction_type=transaction_type  # Pass transaction type
                     )
@@ -201,7 +207,7 @@ class TransactionManager:
                     "SplitIndex": i,
                     "Date": date,
                     "Time": datetime.datetime.now().strftime("%H:%M:%S"),
-                    "Payer/Payee": effective_payee_uuid,
+                    "Payer/Payee": effective_payee_uuid, # Use Payee UUID here as per your file
                     "Account": effective_account,
                     "Description": split_description,
                     "Amount": split_amount,
@@ -235,7 +241,7 @@ class TransactionManager:
                 self.metadata_manager.add_metadata_entries(
                     transaction_id=transaction_id,
                     metadata_entries=transaction_metadata_entries,
-                    source="Manual_Input_With_Invoice_Parse",  # This source might need refinement if not from invoice
+                    source="Manual_Input",  # Changed source to reflect manual input directly
                     split_index=-1
                 )
 
@@ -246,71 +252,203 @@ class TransactionManager:
             print(f"Error in add_manual_transaction: {e}")
             raise
 
-    def get_all_transactions(self) -> pd.DataFrame:
+    def get_all_transactions(self, include_payee_names: bool = True) -> pd.DataFrame:
         """
-        Retrieves all transactions currently loaded.
-        Returns:
-            pd.DataFrame: A DataFrame containing all transactions.
-        """
-        return self.csv_manager.load_transactions().copy()
-
-    def update_transaction(self, transaction_id: str, split_index: int, updated_data: Dict[str, Any],
-                           updated_metadata_entries: Optional[List[Dict[str, Any]]] = None) -> bool:
-        """
-        Updates an existing transaction split in the DataFrame and saves changes.
-        Args:
-            transaction_id (str): The ID of the transaction to update.
-            split_index (int): The index of the split within the transaction to update.
-            updated_data (Dict[str, Any]): A dictionary of updated transaction details for the specific split.
-            updated_metadata_entries (Optional[List[Dict[str, Any]]]): A list of dictionaries for metadata updates.
-        Returns:
-            bool: True if the transaction was updated successfully, False otherwise.
+        Retrieves all transactions from the CSV.
+        Optionally enriches the DataFrame by replacing PayeeId with Payee Name.
         """
         transactions_df = self.csv_manager.load_transactions()
-        # Find the row(s) to update
-        row_index = transactions_df[(transactions_df['TransactionID'] == transaction_id) &
-                                    (transactions_df['SplitIndex'] == split_index)].index
 
-        if row_index.empty:
-            print(f"Transaction ID {transaction_id} with SplitIndex {split_index} not found for update.")
-            return False
+        if transactions_df.empty:
+            return pd.DataFrame()
 
-        # Update core transaction fields
-        for key, value in updated_data.items():
-            if key == 'date':
-                transactions_df.loc[row_index, 'Date'] = value.isoformat() if isinstance(value, datetime.date) else value
-            elif key == 'budget_path_display':
-                # Reconstruct BudgetScope, BudgetCategory, BudgetSubCategory from budget_path_display
-                parts = value.split('::')
-                transactions_df.loc[row_index, 'BudgetScope'] = parts[0] if len(parts) > 0 else ''
-                transactions_df.loc[row_index, 'BudgetCategory'] = parts[1] if len(parts) > 1 else ''
-                # Handle subcategory if needed, assuming it's the last part if more than 2
-                transactions_df.loc[row_index, 'BudgetSubCategory'] = parts[2] if len(parts) > 2 else ''
-            elif key in transactions_df.columns:
-                transactions_df.loc[row_index, key] = value
-            # else: print(f"Warning: Attempted to update non-existent column or special handling for {key}")
+        if include_payee_names:
+            # Map Payer/Payee (which contains PayeeId) to Payee Name
+            # Create a dictionary for faster lookup
+            payee_id_to_name_map = {
+                payee['PayeeId']: payee['Name']
+                for _, payee in self.payee_manager.get_all_payees_payers().iterrows() # Accessing internal df for efficiency
+            }
+            # Use .loc to avoid SettingWithCopyWarning
+            # Assuming 'Payer/Payee' is the column with UUIDs
+            transactions_df.loc[:, 'PayeeName'] = transactions_df['Payer/Payee'].map(payee_id_to_name_map).fillna(transactions_df['Payer/Payee'])
+            # Drop PayeeId column if not needed for display, or keep it for internal use
+            # For now, let's keep both for flexibility, but ensure UI uses PayeeName
+            # transactions_df = transactions_df.drop(columns=['Payer/Payee']) # Do not drop for now
 
-        transactions_df.loc[row_index, 'LastModified'] = datetime.datetime.now().isoformat()
+        return transactions_df
 
-        # Handle metadata updates: For simplicity, delete existing and re-add.
-        # More robust approach would be to compare and update/add/delete individually.
-        if updated_metadata_entries:
-            self.metadata_manager.delete_metadata_for_transaction_split(transaction_id, split_index)
-            self.metadata_manager.add_metadata_entries(transaction_id, updated_metadata_entries,
-                                                       source=updated_metadata_entries[0].get('source', 'Manual Edit'),
-                                                       split_index=split_index)
-            # for metadata in updated_metadata_entries:
-            #     self.metadata_manager.add_metadata_entry(
-            #         transaction_id=transaction_id,
-            #         split_index=split_index,
-            #         key=metadata['key'],
-            #         value=metadata['value'],
-            #         source=metadata.get('source', 'Manual Edit')
-            #     )
+    def get_transactions_by_month_year(self, month: int, year: int, include_payee_names: bool = True) -> pd.DataFrame:
+        """
+        Retrieves transactions for a specific month and year.
+        Args:
+            month (int): The month (1-12).
+            year (int): The year.
+            include_payee_names (bool): Whether to replace PayeeId with PayeeName.
+        Returns:
+            pd.DataFrame: DataFrame of transactions for the specified month/year.
+        """
+        all_transactions_df = self.get_all_transactions(include_payee_names=include_payee_names)
+        if all_transactions_df.empty:
+            return pd.DataFrame()
 
-        self.csv_manager.save_transactions(transactions_df)
-        print(f"Transaction {transaction_id} (Split {split_index}) updated successfully.")
-        return True
+        # Ensure 'Date' column is datetime objects for filtering
+        all_transactions_df['Date'] = pd.to_datetime(all_transactions_df['Date'], errors='coerce')
+
+        # Filter by month and year
+        # filtered_df = pd.DataFrame()
+        filtered_df = all_transactions_df[
+            (all_transactions_df['Date'].dt.month == month) &
+            (all_transactions_df['Date'].dt.year == year)
+        ].copy() # Use .copy() to prevent SettingWithCopyWarning
+
+        return filtered_df
+
+    def update_transaction(self,
+                           transaction_id: str,
+                           date: Optional[datetime.date] = None,
+                           payee_name: Optional[str] = None, # Changed to payee_name for easier use with UI
+                           account: Optional[str] = None,
+                           transaction_type: Optional[str] = None,
+                           # total_amount is derived from splits, or should be checked for consistency
+                           splits: Optional[List[Dict[str, Any]]] = None, # Updated splits format
+                           notes: Optional[str] = None,
+                           file_path: Optional[str] = None,
+                           metadata: Optional[List[Dict[str, str]]] = None, # Assuming dicts of {'key': 'value'}
+                           related_transaction_id: Optional[str] = None,
+                           original_transaction_id: Optional[str] = None):
+        """
+        Updates an existing transaction, including its main fields and/or splits.
+        This function will delete existing splits for the given transaction_id and re-add them
+        if 'splits' is provided, ensuring data integrity.
+        It uses the add_manual_transaction method for re-insertion, ensuring consistency.
+        """
+        # Load all transactions
+        transactions_df = self.csv_manager.load_transactions()
+
+        # Find all rows related to this transaction_id
+        transaction_rows_indices = transactions_df[transactions_df['TransactionID'] == transaction_id].index.tolist()
+
+        if not transaction_rows_indices:
+            print(f"Transaction ID {transaction_id} not found for update.")
+            return
+
+        # Get existing values for fields not provided in update
+        # This requires getting at least one existing row's data
+        # Ensure we get the *original* transaction data to fill missing fields
+        original_transaction_df = self.csv_manager.load_transactions()
+        first_existing_row = original_transaction_df[original_transaction_df['TransactionID'] == transaction_id].iloc[0]
+
+        _date = date if date is not None else pd.to_datetime(first_existing_row['Date']).date()
+        _payee_name = payee_name if payee_name is not None else self.payee_manager.get_payee_name_by_id(first_existing_row['Payer/Payee'])
+        _account = account if account is not None else first_existing_row['Account']
+        _transaction_type = transaction_type if transaction_type is not None else first_existing_row['TransactionType']
+        _notes = notes if notes is not None else first_existing_row['Notes']
+        _file_path = file_path if file_path is not None else (first_existing_row['FilePath'] if 'FilePath' in first_existing_row else '')
+        _related_transaction_id = related_transaction_id if related_transaction_id is not None else (first_existing_row['RelatedTransactionID'] if 'RelatedTransactionID' in first_existing_row else '')
+        _original_transaction_id = original_transaction_id if original_transaction_id is not None else (first_existing_row['OriginalTransactionID'] if 'OriginalTransactionID' in first_existing_row else '')
+
+        # Get existing transaction-level metadata if not provided
+        _metadata = metadata if metadata is not None else self.metadata_manager.get_metadata_for_transaction(transaction_id, split_index=-1)
+        # Convert metadata list of objects to {'key': 'value'} dicts if needed
+        # Assuming metadata_manager.get_metadata_for_transaction returns list of dicts like {'Key': 'value', ...}
+        # We need {'key': 'value'} for add_manual_transaction
+        _formatted_metadata = []
+        if _metadata:
+            _formatted_metadata = [{'key': entry['Key'], 'value': entry['Value']} for entry in _metadata]
+
+
+        # If splits are provided, it means we are replacing all existing splits for this transaction.
+        if splits is not None:
+            # Delete existing transaction rows (all splits) and associated metadata
+            transactions_df = transactions_df.drop(transaction_rows_indices).reset_index(drop=True)
+            self.csv_manager.save_transactions(transactions_df) # Save interim state to remove old rows
+            self.metadata_manager.delete_metadata_for_transaction(transaction_id) # Delete all related metadata
+
+            # Recalculate total_amount from new splits, if not explicitly provided
+            # Note: total_amount is not directly passed to add_manual_transaction; it's derived/handled within splits.
+            # We will pass the sum of new splits' amounts in this context
+            if splits:
+                calculated_total_amount = sum(s.get('amount', 0.0) for s in splits)
+            else:
+                calculated_total_amount = 0.0 # No splits provided, effectively a zero amount transaction if allowed
+
+            # Prepare splits for add_manual_transaction based on the new splits provided
+            # We need to map the incoming simplified 'splits' (BudgetPath, Amount, Notes)
+            # to the more detailed format expected by add_manual_transaction (description, budget_scope etc.)
+            # Assuming incoming splits are: List[Dict[str, Any]] with 'full_budget_path', 'amount', 'notes', 'description'
+            # If any of budget_scope, category, sub_category are missing, add_manual_transaction will re-categorize.
+            splits_for_add_manual = []
+            for split in splits:
+                # Attempt to parse full_budget_path into its components if available
+                budget_path_parts = split.get('full_budget_path', '').split('::')
+                budget_scope = budget_path_parts[0] if len(budget_path_parts) > 0 else ''
+                category = budget_path_parts[1] if len(budget_path_parts) > 1 else ''
+                sub_category = budget_path_parts[2] if len(budget_path_parts) > 2 else ''
+
+                splits_for_add_manual.append({
+                    'description': split.get('description', ''), # If description is missing, it will be blank
+                    'notes': split.get('notes', ''),
+                    'amount': split.get('amount', 0.0),
+                    'budget_scope': split.get('budget_scope', budget_scope), # Prefer provided, else derived
+                    'category': split.get('category', category),
+                    'sub_category': split.get('sub_category', sub_category),
+                    'full_budget_path': split.get('full_budget_path', ''),
+                    'payee': split.get('payee', _payee_name), # Split-specific payee
+                    'account': split.get('account', _account) # Split-specific account
+                })
+
+            # Re-add the transaction with new/updated splits and metadata using add_manual_transaction
+            self.add_manual_transaction(
+                transaction_id=transaction_id,
+                transaction_type=_transaction_type,
+                date=_date,
+                payee=_payee_name, # Pass the conformed payee name
+                account=_account,
+                uploaded_file=(_file_path if os.path.exists(_file_path) else None), # Re-attach file if exists
+                splits=splits_for_add_manual,
+                related_transaction_id=_related_transaction_id,
+                manual_metadata=_formatted_metadata
+            )
+        else:
+            # If no splits are provided, update only the main transaction fields for all splits.
+            # This requires direct DataFrame manipulation and then saving.
+            for idx in transaction_rows_indices:
+                if date is not None:
+                    transactions_df.loc[idx, 'Date'] = date.isoformat()
+                if payee_name is not None:
+                    # Need to get payee_id from payee_name
+                    updated_payee_id = self.payee_manager.add_payee(payee_name) # Ensure payee exists and get its ID
+                    transactions_df.loc[idx, 'Payer/Payee'] = updated_payee_id # Update the Payer/Payee column
+                if account is not None:
+                    transactions_df.loc[idx, 'Account'] = account
+                if transaction_type is not None:
+                    transactions_df.loc[idx, 'TransactionType'] = transaction_type
+                if notes is not None:
+                    transactions_df.loc[idx, 'Notes'] = notes
+                if file_path is not None: # Update only the first split's file_path, or manage carefully
+                    if transactions_df.loc[idx, 'SplitIndex'] == 0: # Assuming file_path is only on primary split
+                        transactions_df.loc[idx, 'FilePath'] = file_path
+                if related_transaction_id is not None: # Update only the first split's related_id
+                     if transactions_df.loc[idx, 'SplitIndex'] == 0:
+                        transactions_df.loc[idx, 'RelatedTransactionID'] = related_transaction_id
+                if original_transaction_id is not None: # Update only the first split's original_id
+                     if transactions_df.loc[idx, 'SplitIndex'] == 0:
+                        transactions_df.loc[idx, 'OriginalTransactionID'] = original_transaction_id
+
+            # Update transaction-level metadata
+            if metadata is not None:
+                self.metadata_manager.delete_metadata_for_transaction(transaction_id, split_index=-1) # Delete general metadata
+                _formatted_metadata = [{'key': meta['Key'], 'value': meta['Value']} for meta in metadata] # Assuming metadata is list of {'Key': 'Value'}
+                self.metadata_manager.add_metadata_entries(
+                    transaction_id=transaction_id,
+                    metadata_entries=_formatted_metadata,
+                    source="Manual_Update_General",
+                    split_index=-1
+                )
+
+            self.csv_manager.save_transactions(transactions_df)
+            print(f"Transaction {transaction_id} main fields updated successfully.")
 
     def delete_transaction(self, transaction_id: str) -> bool:
         """
