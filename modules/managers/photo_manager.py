@@ -36,7 +36,7 @@ class PhotoManager:
     It uses CSVManager for metadata persistence and AppConfigManager for directory paths.
     """
 
-    def __init__(self, csv_manager: CSVManager, app_config_manager: AppConfigManager):
+    def __init__(self, csv_manager: CSVManager, photo_storage_dir: str = 'invoices_input_dir'):
         """
         Initializes the PhotoManager.
 
@@ -45,9 +45,8 @@ class PhotoManager:
             app_config_manager (AppConfigManager): An instance of AppConfigManager to get file storage paths.
         """
         self.csv_manager = csv_manager
-        self.app_config_manager = app_config_manager
         # Use the existing 'invoices_input_dir' for storing photos as per requirement.
-        self.photo_storage_dir = self.app_config_manager.get_path('invoices_input_dir')
+        self.photo_storage_dir = photo_storage_dir
 
         os.makedirs(self.photo_storage_dir, exist_ok=True)
         self._photo_references_df = self.csv_manager.load_photo_references()
