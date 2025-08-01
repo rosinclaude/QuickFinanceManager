@@ -1,3 +1,4 @@
+# README NOT UPDATED YET.
 # QuickFinanceManager
 
 ## Overview
