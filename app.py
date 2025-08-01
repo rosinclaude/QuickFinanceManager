@@ -10,6 +10,7 @@ from modules.managers.transaction_manager import TransactionManager
 from modules.managers.finance_config_manager import MonthlyFinanceConfigManager
 from modules.managers.app_config_manager import AppConfigManager
 from modules.managers.metadata_manager import MetadataManager
+from modules.managers.photo_manager import PhotoManager
 # No need to import ui_tabs or automation modules here for initial setup
 
 # Set general page configuration for the entire app
@@ -66,14 +67,15 @@ def initialize_managers():
         st.stop()
 
     payee_manager = PayeeManager(csv_manager=csv_manager)
-
+    photo_manager = PhotoManager(csv_manager=csv_manager, photo_storage_dir=app_config_manager.get_path('invoices_input_dir'))
     # TransactionManager takes all relevant managers and the full app_config
     transaction_manager = TransactionManager(
         csv_manager=csv_manager,
         monthly_finance_config_manager=monthly_finance_config_manager,
         payee_manager=payee_manager,
         metadata_manager=metadata_manager,
-        app_config=app_config
+        app_config=app_config,
+        photo_manager=photo_manager
     )
     st.success("Managers initialized successfully!")
     return {
@@ -82,7 +84,8 @@ def initialize_managers():
         "payee_manager": payee_manager,
         "app_config_manager": app_config_manager,
         "csv_manager": csv_manager, # Also store csv_manager for direct access if needed
-        "metadata_manager": metadata_manager # Also store metadata_manager for direct access if needed
+        "metadata_manager": metadata_manager, # Also store metadata_manager for direct access if needed
+        "photo_manager": photo_manager, # store photo_manager for direct access only if needed
     }
 
 # Call the initialization function and store managers in session_state
