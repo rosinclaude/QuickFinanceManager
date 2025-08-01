@@ -1,5 +1,21 @@
 # modules/managers/csv_manager.py
 
+"""
+Purpose: This file defines the CSVManager class, which is responsible for managing
+the loading and saving of data to various CSV files used by the Quick Finance Organiser
+application. It ensures that essential data files (transactions, payees, metadata,
+and now photo references) exist with the correct headers, handles data type consistency
+during loading, and prepares data for saving.
+
+Interactions:
+- Initialized by `app.py` or `pages/1_Add_Transaction.py` (via `get_managers`)
+  with paths provided by `AppConfigManager`.
+- Used by `TransactionManager` to load/save transaction data.
+- Used by `PayeeManager` to load/save payee data.
+- Used by `MetadataManager` to load/save metadata.
+- Will be used by the new `PhotoManager` to load/save photo reference data.
+"""
+
 import os
 import pandas as pd
 import datetime
@@ -7,29 +23,35 @@ import datetime
 
 class CSVManager:
     """
-    Manages loading and saving data for both transaction and payee CSV files.
+    Manages loading and saving data for transaction, payee, metadata, and photo reference CSV files.
     Ensures default files with headers are created if they don't exist.
     """
 
-    def __init__(self, transactions_csv_path: str, payees_csv_path: str, metadata_csv_path: str):
+    def __init__(self, transactions_csv_path: str, payees_csv_path: str, metadata_csv_path: str,
+                 photo_references_csv_path: str):
         """
         Initializes the CSVManager.
+
         Args:
             transactions_csv_path (str): Full path to the transactions CSV file.
             payees_csv_path (str): Full path to the payees CSV file.
             metadata_csv_path (str): Full path to the metadata CSV file.
+            photo_references_csv_path (str): Full path to the photo references CSV file.
         """
         self.transactions_csv_path = transactions_csv_path
         self.payees_csv_path = payees_csv_path
         self.metadata_csv_path = metadata_csv_path
+        self.photo_references_csv_path = photo_references_csv_path  # New path for photo references
 
         # Ensure the data directory exists where CSVs will be stored
+        # Assuming all CSVs are in the same directory structure, creating for transactions_csv_path is sufficient
         os.makedirs(os.path.dirname(transactions_csv_path), exist_ok=True)
 
         # Ensure default CSV files exist with proper headers
         self._ensure_transactions_csv_exists()
         self._ensure_payees_csv_exists()
         self._ensure_metadata_csv_exists()
+        self._ensure_photo_references_csv_exists()  # New call to ensure photo references CSV exists
 
     def _ensure_transactions_csv_exists(self):
         """
@@ -73,6 +95,19 @@ class CSVManager:
             ]
             df = pd.DataFrame(columns=columns)
             df.to_csv(self.metadata_csv_path, index=False)
+
+    def _ensure_photo_references_csv_exists(self):
+        """
+        Creates the photo references CSV file with defined headers if it does not exist.
+        This file links TransactionIDs to the file paths of uploaded images (e.g., invoices).
+        """
+        if not os.path.exists(self.photo_references_csv_path):
+            print(f"Creating default photo references CSV at: {self.photo_references_csv_path}")
+            columns = [
+                "PhotoReferenceID", "TransactionID", "FilePath", "TimestampAdded"
+            ]
+            df = pd.DataFrame(columns=columns)
+            df.to_csv(self.photo_references_csv_path, index=False)
 
     def load_transactions(self) -> pd.DataFrame:
         """Loads transaction data from the CSV file.
@@ -290,4 +325,55 @@ class CSVManager:
             print(f"Metadata saved to {self.metadata_csv_path}")
         except Exception as e:
             print(f"Error saving metadata CSV: {e}")
+            raise
+
+    def load_photo_references(self) -> pd.DataFrame:
+        """Loads photo reference data from the CSV file."""
+        photo_ref_column_types = {
+            'PhotoReferenceID': str,
+            'TransactionID': str,
+            'FilePath': str,
+            'TimestampAdded': str
+        }
+        
+        try:
+            df = pd.read_csv(self.photo_references_csv_path, dtype=photo_ref_column_types)
+
+            # Ensure all expected columns are present, add if missing with default values
+            for col, d_type in photo_ref_column_types.items():
+                if col not in df.columns:
+                    print(f"Column '{col}' not found in photo references CSV. Adding with default values.")
+                    if d_type == str:
+                        df[col] = ''
+
+            df['TimestampAdded'] = pd.to_datetime(df['TimestampAdded'], errors='coerce')
+            df['TimestampAdded'] = df['TimestampAdded'].apply(lambda x: x if pd.notna(x) else None)
+
+            for col in ['PhotoReferenceID', 'TransactionID', 'FilePath']:
+                if col in df.columns:
+                    df[col] = df[col].fillna('')
+
+            return df
+        except pd.errors.EmptyDataError:
+            print(f"Photo references CSV is empty. Returning empty DataFrame.")
+            self._ensure_photo_references_csv_exists()
+            return pd.DataFrame(columns=list(photo_ref_column_types.keys()))
+        except Exception as e:
+            print(f"Error loading photo references CSV: {e}")
+            raise
+
+    def save_photo_references(self, df: pd.DataFrame):
+        """Saves photo reference data to the CSV file."""
+        df_to_save = df.copy()
+
+        # Ensure TimestampAdded is datetime-like before converting to isoformat string
+        df_to_save['TimestampAdded'] = pd.to_datetime(df_to_save['TimestampAdded'], errors='coerce')
+        df_to_save['TimestampAdded'] = df_to_save['TimestampAdded'].apply(
+            lambda x: x.isoformat() if pd.notna(x) else ''
+        )
+        try:
+            df_to_save.to_csv(self.photo_references_csv_path, index=False)
+            print(f"Photo references saved to {self.photo_references_csv_path}")
+        except Exception as e:
+            print(f"Error saving photo references CSV: {e}")
             raise
