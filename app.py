@@ -34,6 +34,7 @@ def initialize_managers():
     transactions_csv_path = app_config_manager.get_path('transactions_csv_file')
     payees_csv_path = app_config_manager.get_path('payees_csv_file')
     metadata_csv_path = app_config_manager.get_path('metadata_csv_file')
+    photos_reference_csv_file = app_config_manager.get_path('photos_reference_csv_file')
 
     default_config_dir = app_config_manager.get_path('default_config_dir')
     monthly_config_dir = app_config_manager.get_path('monthly_config_dir')
@@ -45,7 +46,7 @@ def initialize_managers():
     current_month = current_date.month
 
     # Initialize core managers
-    csv_manager = CSVManager(transactions_csv_path, payees_csv_path, metadata_csv_path)
+    csv_manager = CSVManager(transactions_csv_path, payees_csv_path, metadata_csv_path, photos_reference_csv_file)
     metadata_manager = MetadataManager(csv_manager)
 
     monthly_finance_config_manager = None
