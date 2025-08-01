@@ -363,7 +363,7 @@ def display_single_transaction_tab(transaction_manager: TransactionManager, mont
             'date': datetime.date.today(),
             'payee': '',
             'account': '',
-            'uploaded_file': None,  # This will be the single uploaded file for this form
+            'uploaded_files': [],  # Changed from 'uploaded_file': None to 'uploaded_files': []
             'manual_metadata': []
         }
     # Initialize payee decision state and raw input tracker on first load
@@ -386,7 +386,7 @@ def display_single_transaction_tab(transaction_manager: TransactionManager, mont
             'date': datetime.date.today(),
             'payee': '',
             'account': '',
-            'uploaded_file': None,
+            'uploaded_files': [],  # Changed from 'uploaded_file': None to 'uploaded_files': []
             'manual_metadata': []
         }
         st.session_state.payee_suggestion_result = None
@@ -424,10 +424,11 @@ def display_single_transaction_tab(transaction_manager: TransactionManager, mont
 
     # Use the 'uploaded_file' in global_transaction_data as the primary holder for the attached file
     # This ensures it's part of the main transaction state
-    st.session_state.global_transaction_data['uploaded_file'] = st.file_uploader(
-        "Attach Invoice/Receipt (Optional)",
+    st.session_state.global_transaction_data['uploaded_files'] = st.file_uploader(
+        "Attach Invoice/Receipts (Optional)",  # Updated label for clarity
         type=['png', 'jpg', 'jpeg', 'pdf'],
-        key="single_transaction_file_uploader"
+        accept_multiple_files=True,  # Added to allow multiple file selection
+        key="multiple_transaction_file_uploader"  # Updated key for uniqueness
     )
 
     col_process, col_save = st.columns([1, 1])
@@ -437,13 +438,14 @@ def display_single_transaction_tab(transaction_manager: TransactionManager, mont
     with col_process:
         # Process button
         if st.button("Process Invoice", key="process_invoice_btn", disabled=not (
-                st.session_state.enable_automation and st.session_state.global_transaction_data['uploaded_file'])):
-            if st.session_state.global_transaction_data['uploaded_file']:
+                st.session_state.enable_automation and st.session_state.global_transaction_data['uploaded_files'])):
+            if st.session_state.global_transaction_data['uploaded_files']:
                 with st.spinner("Processing invoice... This may take a moment."):
                     try:
                         # Process the uploaded file
                         suggested_data = transaction_manager.process_uploaded_invoice(
-                            st.session_state.global_transaction_data['uploaded_file'])
+                            st.session_state.global_transaction_data['uploaded_files'][
+                                0])  # Pass the first file for processing
                         st.session_state.extracted_invoice_data = suggested_data  # Store for pre-filling
                         st.success("Invoice processed successfully! Review and modify the suggested transaction below.")
                         _populate_form_from_extracted_data(suggested_data)  # Populate fields
@@ -808,7 +810,7 @@ def display_single_transaction_tab(transaction_manager: TransactionManager, mont
                             date=st.session_state.global_transaction_data['date'],
                             payee=st.session_state.global_transaction_data['payee'],
                             account=st.session_state.global_transaction_data['account'],
-                            uploaded_file=st.session_state.global_transaction_data['uploaded_file'],
+                            uploaded_files=st.session_state.global_transaction_data['uploaded_files'],
                             # Pass the attached file
                             splits=splits_for_manager,
                             manual_metadata=st.session_state.global_transaction_data['manual_metadata']
@@ -857,7 +859,7 @@ def display_single_transaction_tab(transaction_manager: TransactionManager, mont
                             date=st.session_state.transfer_data['date'],
                             payee=transfer_payee,
                             account=source_account_name,
-                            uploaded_file=st.session_state.global_transaction_data['uploaded_file'],
+                            uploaded_files=st.session_state.global_transaction_data['uploaded_files'],
                             # Pass the attached file
                             splits=transfer_splits,
                             manual_metadata=st.session_state.global_transaction_data['manual_metadata']
@@ -867,7 +869,7 @@ def display_single_transaction_tab(transaction_manager: TransactionManager, mont
 
                     # Reset states after successful save for all transaction types
                     st.session_state.global_transaction_data = {
-                        'date': datetime.date.today(), 'payee': '', 'account': '', 'uploaded_file': None,
+                        'date': datetime.date.today(), 'payee': '', 'account': '', 'uploaded_files': [],
                         'manual_metadata': []
                     }
                     st.session_state.payee_suggestion_result = None
