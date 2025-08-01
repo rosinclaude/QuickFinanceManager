@@ -1,4 +1,6 @@
 # modules/managers/payee_manager.py
+import uuid
+from typing import Optional
 
 import pandas as pd
 import datetime
@@ -28,11 +30,31 @@ class PayeeManager:
         """
         return self._unique_payee_names
 
+    def get_payee_name_by_id(self, payee_id: str) -> Optional[str]:
+        """
+        Retrieves the payee name given its UUID.
+        Returns None if the payee ID is not found.
+        """
+        if self._payees_df.empty:
+            return None
+
+        result = self._payees_df[self._payees_df['PayeeId'] == payee_id]
+        if not result.empty:
+            return result['Name'].iloc[0]
+        return None
+
+    def get_all_payees_payers(self):
+        """
+        Returns a copy of the payee/payer data
+        """
+        return self._payees_df.copy()
+
     def add_payee(self, new_payee_name: str, is_subscription: bool = False, notes: str = ""):
         """
         Adds a new payee to the internal DataFrame and persists it to CSV if it's not already present
         and not identified as an internal account.
         """
+        # TODO: save and extract from databases.
         if not new_payee_name:
             print("Attempted to add empty payee name. Skipping.")
             return
@@ -59,8 +81,10 @@ class PayeeManager:
             return
 
         if new_payee_name not in self._payees_df['Name'].values:
+            payee_id = f"PRN-{int(datetime.datetime.now().timestamp())}-{uuid.uuid4().hex[:6].upper()}"
             print(f"Adding new payee: {new_payee_name}")
             new_payee_data = {
+                "PayeeId": payee_id,
                 "Name": new_payee_name,
                 "Aliases": "",
                 "DefaultCategory": "",
@@ -85,3 +109,6 @@ class PayeeManager:
             self.csv_manager.save_payees(self._payees_df)
         else:
             print(f"Payee '{new_payee_name}' already exists. Not adding.")
+            payee_id = self._payees_df.loc[self._payees_df['Name'] == new_payee_name]['PayeeId'].values[0]
+
+        return payee_id # GET the uuid and return it.

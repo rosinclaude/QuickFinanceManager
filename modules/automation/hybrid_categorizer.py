@@ -37,7 +37,7 @@ import joblib  # For loading scikit-learn models and components
 from modules.ml.data_preprocessor import DataPreprocessor
 from modules.ml.llm_fine_tuner import LLMFineTuner, LLMClient
 # Import LLMClient and LLMFineTuner as they are still part of the hybrid approach
-from modules.managers.finance_config_manager import FinanceConfigManager
+from modules.managers.finance_config_manager import MonthlyFinanceConfigManager
 
 
 class HybridCategorizer:
@@ -51,15 +51,15 @@ class HybridCategorizer:
     rather than relying on trainer classes for loading.
     """
 
-    def __init__(self, config_manager: FinanceConfigManager, app_config: Dict[str, Any]):
+    def __init__(self, monthly_finance_config_manager: MonthlyFinanceConfigManager, app_config: Dict[str, Any]):
         """
         Initializes the HybridCategorizer.
 
         Args:
-            config_manager (FinanceConfigManager): An instance of FinanceConfigManager.
+            monthly_finance_config_manager (MonthlyFinanceConfigManager): An instance of FinanceConfigManager.
             app_config (Dict[str, Any]): The loaded application configuration.
         """
-        self.config_manager = config_manager
+        self.config_manager = monthly_finance_config_manager
         self.app_config = app_config
         self.default_category_mapping = self.config_manager.get_default_category_mapping()
 

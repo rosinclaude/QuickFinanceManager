@@ -7,18 +7,21 @@ from typing import Dict, List, Any, Optional
 import pandas as pd
 
 from modules.managers.transaction_manager import TransactionManager
-from modules.managers.finance_config_manager import FinanceConfigManager
+from modules.managers.finance_config_manager import MonthlyFinanceConfigManager
 from modules.managers.payee_manager import PayeeManager
 from modules.managers.app_config_manager import AppConfigManager
 from modules.managers.csv_manager import CSVManager
 from modules.managers.metadata_manager import MetadataManager
 
 
+# No longer directly import VendorConfigManager, it's accessed via transaction_manager
+
+
 # --- Helper Functions for UI Reusability ---
 
-def _get_account_options(config_manager: FinanceConfigManager) -> list:
+def _get_account_options(monthly_finance_config_manager: MonthlyFinanceConfigManager) -> list:
     """Returns a list of account display strings for selectboxes."""
-    all_accounts_with_types = config_manager.get_all_accounts_with_types()
+    all_accounts_with_types = monthly_finance_config_manager.get_all_accounts_with_types()
     return [f"{name} ({type})" for name, type in all_accounts_with_types]
 
 
@@ -27,9 +30,9 @@ def _get_account_name_from_display(display_string: str) -> str | None:
     return display_string.split(' (')[0] if display_string else None
 
 
-def _get_account_type_for_display(account_name: str, config_manager: FinanceConfigManager) -> str:
+def _get_account_type_for_display(account_name: str, monthly_finance_config_manager: MonthlyFinanceConfigManager) -> str:
     """Helper to get the type of an account for display purposes."""
-    all_accounts = config_manager.get_all_accounts_with_types()
+    all_accounts = monthly_finance_config_manager.get_all_accounts_with_types()
     for name, type_name in all_accounts:
         if name == account_name:
             return type_name
@@ -81,7 +84,6 @@ def _display_dynamic_category_selector_ui(
 
     # Update session state for the selected scope
     st.session_state[f'{session_state_key_prefix}_budget_scope'] = selected_scope_ui
-    # full_budget_path_accumulator = selected_scope_ui # No longer directly needed
 
     current_level_dict = structured_categories.get(selected_scope_ui, {})
 
@@ -175,9 +177,9 @@ def _get_all_unique_metadata_keys(_metadata_manager: MetadataManager) -> List[st
 
 
 # --- Callback for Payee text input changes ---
-def _handle_payee_input_change(transaction_manager: TransactionManager, app_config_manager: AppConfigManager):
+def _handle_payee_input_change(transaction_manager: TransactionManager):
     """
-    Callback function triggered when the payee text input changes.
+    Callback function triggered when the payee text input's value changes due to user typing.
     Performs fuzzy matching and stores suggestion in session state.
     """
     # Get the raw input directly from the widget's key, not from global_transaction_data['payee']
@@ -217,6 +219,7 @@ def _handle_payee_input_change(transaction_manager: TransactionManager, app_conf
         # For ambiguous, set the suggested name as the current payee (for pre-filling if accepted)
         # but keep payee_decision_made = False to prompt user interaction.
         st.session_state.global_transaction_data['payee'] = suggestion_result['suggested_conformed_name']
+        st.session_state.payee_decision_made = False
         print(
             f"Ambiguous match for '{raw_payee_input}'. Suggested: '{suggestion_result['suggested_conformed_name']}'. User decision required.")
     else:  # NO_MATCH
@@ -226,21 +229,126 @@ def _handle_payee_input_change(transaction_manager: TransactionManager, app_conf
         print(f"No strong match for '{raw_payee_input}'. Will use as new payee.")
 
 
-# --- Main Display Function ---
+def _handle_payee_selection_from_list(transaction_manager: TransactionManager, app_config_manager: AppConfigManager):
+    """
+    Callback function triggered when a payee is selected from the selectbox.
+    Updates the text input value and triggers fuzzy matching logic.
+    """
+    selected_payee_from_list = st.session_state.general_payee_list_selectbox
 
-def display_manual_entry_tab(transaction_manager: TransactionManager, config_manager: FinanceConfigManager,
-                             app_config_manager: AppConfigManager):
+    if selected_payee_from_list:
+        st.session_state.global_transaction_data['payee'] = selected_payee_from_list
+        st.session_state['general_payee_text_input'] = selected_payee_from_list
+        st.session_state.payee_decision_made = True
+        st.session_state.raw_payee_input_original = selected_payee_from_list
+        st.session_state.payee_suggestion_result = None
+    else:
+        st.session_state.global_transaction_data['payee'] = ''
+        st.session_state['general_payee_text_input'] = ''
+        st.session_state.payee_suggestion_result = None
+        st.session_state.payee_decision_made = True
+        st.session_state.raw_payee_input_original = ''
+
+    st.rerun()
+
+
+def _populate_form_from_extracted_data(extracted_data: Dict[str, Any]):
     """
-    Displays the UI for manually entering a transaction with dynamic fields
-    based on transaction type (Expense, Income, Transfer).
+    Populates the Streamlit form fields with data extracted from an invoice,
+    respecting user-prefilled fields where appropriate.
     """
-    st.header("Enter Transaction Details Manually")
+    # Preserve current state before populating from extracted data
+    current_global_data = st.session_state.global_transaction_data
+    current_splits = st.session_state.get('expense_splits') or st.session_state.get('income_splits')
+    current_metadata_entries = st.session_state.get('manual_metadata_entries', [])
+
+    # Date
+    if extracted_data.get('date') and not current_global_data.get('date') == extracted_data['date']:
+        st.session_state.global_transaction_data['date'] = extracted_data['date']
+
+    # Payee: Prioritize user's manual input if it exists, otherwise use extracted
+    extracted_payee = extracted_data.get('payee', '')
+    if not current_global_data.get('payee') and extracted_payee:  # If user's payee is empty
+        st.session_state.global_transaction_data['payee'] = extracted_payee
+        st.session_state['general_payee_text_input'] = extracted_payee  # Also set text input's key
+        st.session_state.raw_payee_input_original = extracted_payee  # Treat extracted as original input
+        st.session_state.payee_suggestion_result = None  # Clear any previous suggestions
+        st.session_state.payee_decision_made = True  # Assume extracted is decided, can be re-ambiguous by typing
+    elif current_global_data.get('payee'):  # If user has pre-filled, run fuzzy match on their input
+        # No change to global_transaction_data['payee'] or general_payee_text_input here,
+        # rely on the main loop's fuzzy matching trigger.
+        pass  # The central fuzzy matching logic will handle this comparison on the next rerun
+
+    # Account
+    if extracted_data.get('account') and not current_global_data.get('account'):
+        st.session_state.global_transaction_data['account'] = extracted_data['account']
+
+    # Splits: Only overwrite if no splits were manually added by the user
+    if not current_splits or (
+            len(current_splits) == 1 and current_splits[0]['amount'] == 0.0 and not current_splits[0]['description']):
+        extracted_splits = extracted_data.get('splits', [])
+        if extracted_splits:
+            formatted_splits = []
+            for split in extracted_splits:
+                formatted_splits.append({
+                    'amount': split.get('amount', 0.0),
+                    'description': split.get('description', ''),
+                    'notes': split.get('notes', ''),
+                    'budget_scope': split.get('budget_scope', ''),
+                    'category': split.get('category', ''),
+                    'sub_category': split.get('sub_category', ''),
+                    'full_budget_path': split.get('full_budget_path', '')
+                })
+            # Determine which split key to use (expense_splits or income_splits)
+            transaction_type = extracted_data.get('transaction_type', 'Expense')
+            split_key_to_use = f'{transaction_type.lower()}_splits'
+            st.session_state[split_key_to_use] = formatted_splits
+            # Also reset category UI state for these newly populated splits
+            for i in range(len(formatted_splits)):
+                prefix = f"{transaction_type.lower()}_split_{i}_cat_ui"
+                full_path_parts = formatted_splits[i]['full_budget_path'].split(':')
+                st.session_state[f'{prefix}_budget_scope'] = full_path_parts[0] if len(full_path_parts) > 0 else ''
+                st.session_state[f'{prefix}_category_path_elements'] = full_path_parts
+                st.session_state[f'{prefix}_full_budget_path'] = formatted_splits[i]['full_budget_path']
+    else:
+        st.info("Splits were pre-filled by the user and will not be overwritten by automation.")
+
+    # Metadata: Merge extracted with manual, prioritizing manual
+    extracted_metadata = extracted_data.get('metadata', [])
+    if extracted_metadata:
+        merged_metadata = []
+        existing_manual_keys = {entry['key'].strip().lower() for entry in current_metadata_entries if entry.get('key')}
+
+        # Add manual entries first
+        merged_metadata.extend(current_metadata_entries)
+
+        # Add extracted entries only if their keys don't conflict with manual entries
+        for ext_meta in extracted_metadata:
+            if ext_meta.get('key', '').strip().lower() not in existing_manual_keys:
+                merged_metadata.append(
+                    {'key': ext_meta.get('key', ''), 'value': ext_meta.get('value', ''), '_selected_from_list_key': ''})
+
+        # Ensure we have at least one empty row if no metadata exists after merge
+        if not merged_metadata:
+            merged_metadata.append({'key': '', 'value': '', '_selected_from_list_key': ''})
+
+        st.session_state.manual_metadata_entries = merged_metadata
+
+    st.rerun()  # Trigger a rerun to display the pre-filled data
+
+
+def display_single_transaction_tab(transaction_manager: TransactionManager, monthly_finance_config_manager: MonthlyFinanceConfigManager,
+                                   app_config_manager: AppConfigManager):
+    """
+    Displays the UI for entering a single transaction, with optional invoice automation.
+    """
+    st.header("Enter Transaction Details")
 
     display_currency_symbol = app_config_manager.get_app_settings().get('display_currency_symbol_on_amount', True)
-    currency_symbol = config_manager.get_currency_symbol() if display_currency_symbol else ""
+    currency_symbol = monthly_finance_config_manager.get_currency_symbol() if display_currency_symbol else ""
 
-    account_options = _get_account_options(config_manager)
-    structured_categories = config_manager.get_all_categories_recursive()
+    account_options = _get_account_options(monthly_finance_config_manager)
+    structured_categories = monthly_finance_config_manager.get_all_categories_recursive()
 
     transaction_types = ["Expense", "Income", "Transfer"]
 
@@ -249,22 +357,14 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
 
     all_unique_metadata_keys = _get_all_unique_metadata_keys(transaction_manager.metadata_manager)
 
-    # --- Step 1: Select Transaction Type (outside any form for immediate reactivity) ---
-    selected_transaction_type = st.radio(
-        "Select Transaction Type",
-        transaction_types,
-        horizontal=True,
-        key="selected_transaction_type_radio"
-    )
-
     # --- Initialize/Reset Global Transaction Data ---
     if 'global_transaction_data' not in st.session_state:
         st.session_state.global_transaction_data = {
             'date': datetime.date.today(),
             'payee': '',
             'account': '',
-            'uploaded_file': None,
-            'manual_metadata': []  # Initialize manual metadata list
+            'uploaded_file': None,  # This will be the single uploaded file for this form
+            'manual_metadata': []
         }
     # Initialize payee decision state and raw input tracker on first load
     if 'payee_suggestion_result' not in st.session_state:
@@ -274,24 +374,27 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
     if 'raw_payee_input_original' not in st.session_state:
         st.session_state.raw_payee_input_original = ''
 
-    # Reset general transaction data if transaction type changes
-    if st.session_state.get('last_selected_transaction_type_general_reset') != selected_transaction_type:
-        # Preserve date, as it's common. Clear payee and account.
+    # State to hold extracted data temporarily
+    if 'extracted_invoice_data' not in st.session_state:
+        st.session_state.extracted_invoice_data = None
+
+    # Reset all relevant states if the tab is re-entered or transaction type changes
+    # This ensures a clean slate if user switches from batch processing or just wants to start fresh
+    if st.session_state.get('last_selected_transaction_type_single_entry') != st.session_state.get(
+            'selected_transaction_type_radio', 'Expense'):
         st.session_state.global_transaction_data = {
-            'date': st.session_state.global_transaction_data['date'],  # Keep the current date
-            'payee': '',  # Reset payee
-            'account': '',  # Reset account
+            'date': datetime.date.today(),
+            'payee': '',
+            'account': '',
             'uploaded_file': None,
-            'manual_metadata': []  # Reset metadata on type change
+            'manual_metadata': []
         }
-        # Reset payee specific UI state
         st.session_state.payee_suggestion_result = None
-        st.session_state.payee_decision_made = True  # Default to True
-        st.session_state.raw_payee_input_original = ''  # Reset raw input tracker
+        st.session_state.payee_decision_made = True
+        st.session_state.raw_payee_input_original = ''
+        st.session_state.extracted_invoice_data = None  # Clear extracted data
 
-        st.session_state['last_selected_transaction_type_general_reset'] = selected_transaction_type
-
-        # Clear split/transfer data
+        # Clear specific split and category UI states
         for key in ['expense_splits', 'income_splits', 'transfer_data']:
             if key in st.session_state:
                 del st.session_state[key]
@@ -302,332 +405,351 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
         # Ensure metadata input fields also reset
         if 'manual_metadata_entries' in st.session_state:
             del st.session_state['manual_metadata_entries']
+        if 'general_payee_text_input' in st.session_state:
+            del st.session_state['general_payee_text_input']
+        if 'current_transaction_id' in st.session_state:
+            del st.session_state['current_transaction_id']
 
-        st.rerun()  # Rerun to apply resets
+        # Set the current transaction type for next session reset check
+        st.session_state['last_selected_transaction_type_single_entry'] = st.session_state.get(
+            'selected_transaction_type_radio', 'Expense')
+        st.rerun()  # Rerun to apply these resets
 
-    # --- Overall File Uploader (Always visible) ---
-    uploaded_file = st.file_uploader("Attach Invoice/Receipt (Optional)", type=['png', 'jpg', 'jpeg', 'pdf'],
-                                     key="general_file_uploader")
+    # --- Top-level controls for automation and file upload ---
+    st.session_state.enable_automation = st.toggle(
+        "Enable Automatic Filling from Invoice/Receipt",
+        value=st.session_state.get('enable_automation', False),
+        key="enable_automation_toggle"
+    )
+
+    # Use the 'uploaded_file' in global_transaction_data as the primary holder for the attached file
+    # This ensures it's part of the main transaction state
+    st.session_state.global_transaction_data['uploaded_file'] = st.file_uploader(
+        "Attach Invoice/Receipt (Optional)",
+        type=['png', 'jpg', 'jpeg', 'pdf'],
+        key="single_transaction_file_uploader"
+    )
+
+    col_process, col_save = st.columns([1, 1])
+    # TODO: Update to save the invoice path.
+    # TODO: Update the csv manager to connect to a database. Update all manager to use database, and thus, foreignkeys and so on.
+    # TODO: Update the transaction manager to use the payee uuid instead of direct name.
+    with col_process:
+        # Process button
+        if st.button("Process Invoice", key="process_invoice_btn", disabled=not (
+                st.session_state.enable_automation and st.session_state.global_transaction_data['uploaded_file'])):
+            if st.session_state.global_transaction_data['uploaded_file']:
+                with st.spinner("Processing invoice... This may take a moment."):
+                    try:
+                        # Process the uploaded file
+                        suggested_data = transaction_manager.process_uploaded_invoice(
+                            st.session_state.global_transaction_data['uploaded_file'])
+                        st.session_state.extracted_invoice_data = suggested_data  # Store for pre-filling
+                        st.success("Invoice processed successfully! Review and modify the suggested transaction below.")
+                        _populate_form_from_extracted_data(suggested_data)  # Populate fields
+                    except Exception as e:
+                        st.error(f"Error processing invoice: {e}")
+                        st.warning("Please try another file or proceed with manual entry.")
+                        st.session_state.extracted_invoice_data = None  # Clear extracted data on error
+            else:
+                st.warning("Please upload an invoice/receipt to process.")
+
+    with col_save:
+        # Placeholder for Save button (will be in the form below)
+        pass
 
     # --- Transaction ID (Always visible) ---
     if 'current_transaction_id' not in st.session_state:
         st.session_state.current_transaction_id = f"TRN-{int(datetime.datetime.now().timestamp())}-{uuid.uuid4().hex[:6].upper()}"
 
     # --- Dynamic UI based on Transaction Type ---
-    if selected_transaction_type in ["Expense", "Income"]:
-        st.markdown("---")
-        st.subheader("General Transaction Information")
+    selected_transaction_type = st.radio(  # Moved this here as it's part of form inputs now
+        "Select Transaction Type",
+        transaction_types,
+        horizontal=True,
+        index=transaction_types.index(st.session_state.get('selected_transaction_type_radio', 'Expense')),
+        # Default to Expense
+        key="selected_transaction_type_radio"
+    )
 
-        st.session_state.global_transaction_data['date'] = st.date_input(
-            "Date",
-            st.session_state.global_transaction_data['date'],
-            key="general_date"
-        )
+    st.session_state.global_transaction_data['date'] = st.date_input(
+        "Date",
+        st.session_state.global_transaction_data['date'],
+        key="general_date"
+    )
 
-        # Payee Selection/Entry
-        # The selectbox for existing payees
-        selected_payee_from_list = st.selectbox(
-            "Select an existing Payer/Payee (Optional)",
-            payee_options,
-            # Set initial index to the current payee if it's in the options, else 0 (empty)
-            index=payee_options.index(st.session_state.global_transaction_data['payee']) if
-            st.session_state.global_transaction_data['payee'] in payee_options else 0,
-            placeholder="Choose from recent payees...",
-            key="general_payee_list_selectbox",
-        )
-        st.info("If you select an existing payee, it will appear in the text input below. You can then edit or add a new payee directly in the text input. The **text input value** will be used for the transaction.")
+    # Payee Selection/Entry
+    st.selectbox(
+        "Select an existing Payer/Payee (Optional)",
+        payee_options,
+        index=payee_options.index(st.session_state.global_transaction_data['payee']) if
+        st.session_state.global_transaction_data['payee'] in payee_options else 0,
+        placeholder="Choose from recent payees...",
+        key="general_payee_list_selectbox",
+        on_change=lambda: _handle_payee_selection_from_list(transaction_manager, app_config_manager)
+        # Use lambda to call function
+    )
+    st.info(
+        "If you select an existing payee, it will appear in the text input below. You can then edit or add a new payee directly in the text input. The **text input value** will be used for the transaction.")
 
-        # If an existing payee is selected from the list, pre-fill the text input
-        # only if the text input is currently empty or matches the previously selected list item.
-        # This prevents overwriting user's manual input if they start typing.
-        if selected_payee_from_list and selected_payee_from_list != st.session_state.global_transaction_data['payee']:
-            # This check ensures we only update if the selectbox value is genuinely different
-            # from what's currently selected OR if the text input itself is empty.
-            # This helps avoid overwriting user's manual typing.
-            st.session_state['general_payee_text_input'] = selected_payee_from_list
-            st.session_state.global_transaction_data['payee'] = selected_payee_from_list
-            # Explicitly trigger the handler as if text was typed, so fuzzy matching runs
-            _handle_payee_input_change(transaction_manager, app_config_manager)
-            st.rerun()  # Rerun to update the text input value displayed
+    # The text input for manual entry or confirming selection
+    st.text_input(
+        "Payer/Payee (Enter new or confirm suggestion)",
+        value=st.session_state.global_transaction_data['payee'],
+        key="general_payee_text_input",
+        placeholder="Type payee name or select from above..."
+    )
 
-        # The text input for manual entry or confirming selection
-        st.session_state.global_transaction_data['payee'] = st.text_input(
-            "Payer/Payee (Enter new or confirm suggestion)",
-            value=st.session_state.global_transaction_data['payee'],
-            key="general_payee_text_input",  # This key stores the current text input value
-            placeholder="Type payee name or select from above...",
-            on_change=_handle_payee_input_change,  # Trigger on change for fuzzy matching
-            args=(transaction_manager, app_config_manager)
-        )
-        st.markdown(
-            "<small style='color: gray;'>The value in the text box above will be used. Selecting from the list will pre-fill this box.</small>",
-            unsafe_allow_html=True)
+    # Trigger fuzzy matching if the current text input value differs from the conformed payee
+    # This handles both initial manual typing and edits after pre-filling.
+    current_text_input_value_for_payee = st.session_state.get('general_payee_text_input', '')
+    if current_text_input_value_for_payee != st.session_state.global_transaction_data['payee']:
+        _handle_payee_input_change(transaction_manager)
+        st.rerun()  # Rerun to display suggestion/conformed name
 
-        # --- Display Payee Suggestion/Confirmation UI ---
-        suggestion_result = st.session_state.payee_suggestion_result
-        # The original input from the user before any auto-conformation/pre-filling
-        original_payee_typed = st.session_state.raw_payee_input_original
+    # Display Payee Suggestion/Confirmation UI
+    suggestion_result = st.session_state.payee_suggestion_result
+    original_payee_typed = st.session_state.raw_payee_input_original
 
-        if suggestion_result and not st.session_state.payee_decision_made:
-            status = suggestion_result['status']
-            suggested_name = suggestion_result['suggested_conformed_name']
+    if suggestion_result and not st.session_state.payee_decision_made:
+        status = suggestion_result['status']
+        suggested_name = suggestion_result['suggested_conformed_name']
 
-            if status == 'AMBIGUOUS':
-                st.warning(
-                    f"Is '{original_payee_typed}' the same as **'{suggested_name}'** (Similarity: {suggestion_result['similarity_score']:.2f})?")
-                col_confirm, col_new = st.columns(2)
-                with col_confirm:
-                    if st.button(f"Yes, use '{suggested_name}'", key="confirm_payee_suggestion"):
-                        st.session_state.global_transaction_data['payee'] = suggested_name
+        if status == 'AMBIGUOUS':
+            st.warning(
+                f"Is '{original_payee_typed}' the same as **'{suggested_name}'** (Similarity: {suggestion_result['similarity_score']:.2f})?")
+            col_confirm, col_new = st.columns(2)
+            with col_confirm:
+                if st.button(f"Yes, use '{suggested_name}'", key="confirm_payee_suggestion"):
+                    st.session_state.global_transaction_data['payee'] = suggested_name
+                    st.session_state.payee_decision_made = True
+                    st.rerun()
+            with col_new:
+                if st.button(f"No, use '{original_payee_typed}' as new payee", key="reject_payee_suggestion"):
+                    st.session_state.global_transaction_data['payee'] = original_payee_typed
+                    st.session_state.payee_decision_made = True
+                    st.rerun()
+
+            if suggestion_result['alternatives']:
+                alternative_names_for_display = [
+                    alt['name'] for alt in suggestion_result['alternatives']
+                    if alt['name'] != suggested_name
+                ]
+                if alternative_names_for_display:
+                    selected_alt_from_options = st.selectbox(
+                        "Or choose from other similar payees:",
+                        [''] + sorted(alternative_names_for_display),
+                        key="select_alternative_payee"
+                    )
+                    if selected_alt_from_options:
+                        st.session_state.global_transaction_data['payee'] = selected_alt_from_options
                         st.session_state.payee_decision_made = True
                         st.rerun()
-                with col_new:
-                    if st.button(f"No, use '{original_payee_typed}' as new payee", key="reject_payee_suggestion"):
-                        st.session_state.global_transaction_data['payee'] = original_payee_typed
-                        st.session_state.payee_decision_made = True
-                        st.rerun()
 
-                # Display alternatives if any
-                if suggestion_result['alternatives']:
-                    alternative_names_for_display = [
-                        alt['name'] for alt in suggestion_result['alternatives']
-                        if alt['name'] != suggested_name  # Exclude the main suggestion
-                    ]
-                    if alternative_names_for_display:
-                        selected_alt_from_options = st.selectbox(
-                            "Or choose from other similar payees:",
-                            [''] + sorted(alternative_names_for_display),  # Sort for consistency
-                            key="select_alternative_payee"
-                        )
-                        if selected_alt_from_options:
-                            st.session_state.global_transaction_data['payee'] = selected_alt_from_options
-                            st.session_state.payee_decision_made = True
-                            st.rerun()
+        elif status in ['NO_MATCH']:
+            st.info(f"No high-confidence match found for '{original_payee_typed}'. This will be added as a new payee.")
+            st.session_state.payee_decision_made = True
+            st.session_state.global_transaction_data['payee'] = original_payee_typed
 
-            elif status in ['NO_MATCH']:  # Explicitly 'NO_MATCH'
-                # If no match, it's implicitly decided to use the raw input as a new payee
-                st.info(
-                    f"No high-confidence match found for '{original_payee_typed}'. This will be added as a new payee.")
-                st.session_state.payee_decision_made = True  # Decision is implicitly made to use as new
-                st.session_state.global_transaction_data['payee'] = original_payee_typed  # Ensure original is used
+        elif status in ['EXACT_MATCH', 'HIGH_CONFIDENCE'] and st.session_state.payee_decision_made:
+            st.success(f"Payee conformed to: **{st.session_state.global_transaction_data['payee']}**")
 
-            elif status in ['EXACT_MATCH', 'HIGH_CONFIDENCE'] and st.session_state.payee_decision_made:
-                # If it's a high confidence or exact match and already decided (auto-set by callback)
-                st.success(f"Payee conformed to: **{st.session_state.global_transaction_data['payee']}**")
+    # Account Selection
+    account_idx = next((i for i, opt in enumerate(account_options) if
+                        _get_account_name_from_display(opt) == st.session_state.global_transaction_data['account']), 0)
+    account_display = st.selectbox(
+        "Account (Overall)",
+        account_options,
+        index=account_idx,
+        placeholder="Choose the main account for this transaction...",
+        key="general_account"
+    )
+    st.session_state.global_transaction_data['account'] = _get_account_name_from_display(account_display)
 
-        # Account Selection (remains the same)
-        account_idx = next((i for i, opt in enumerate(account_options) if
-                            _get_account_name_from_display(opt) == st.session_state.global_transaction_data['account']),
-                           0)
-        account_display = st.selectbox(
-            "Account (Overall)",
-            account_options,
-            index=account_idx,
-            placeholder="Choose the main account for this transaction...",
-            key="general_account"
-        )
-        st.session_state.global_transaction_data['account'] = _get_account_name_from_display(account_display)
+    st.markdown("---")
+    st.subheader(f"Splits for {selected_transaction_type}")
 
-        st.markdown("---")
-        st.subheader(f"Splits for {selected_transaction_type}")
+    split_key = f'{selected_transaction_type.lower()}_splits'
 
-        split_key = f'{selected_transaction_type.lower()}_splits'
+    if split_key not in st.session_state:
+        st.session_state[split_key] = [{
+            'amount': 0.0, 'description': '', 'notes': '',
+            'budget_scope': '', 'category': '', 'sub_category': '',
+            'full_budget_path': ''
+        }]
 
-        # Initialize splits or reset if transaction type changed
-        if split_key not in st.session_state:
-            st.session_state[split_key] = [{
-                'amount': 0.0,
-                'description': '',
-                'notes': '',
+    col_split_btns = st.columns([1, 1, 3])
+    with col_split_btns[0]:
+        if st.button("Add Another Split", key=f"{selected_transaction_type}_add_split_btn_outside"):
+            st.session_state[split_key].append({
+                'amount': 0.0, 'description': '', 'notes': '',
                 'budget_scope': '', 'category': '', 'sub_category': '',
                 'full_budget_path': ''
-            }]
+            })
+            st.rerun()
+    with col_split_btns[1]:
+        if len(st.session_state[split_key]) > 1:
+            if st.button("Remove Last Split", key=f"{selected_transaction_type}_remove_split_btn_outside"):
+                prefix_to_clear = f"{selected_transaction_type}_split_{len(st.session_state[split_key]) - 1}_cat_ui"
+                for k in list(st.session_state.keys()):
+                    if k.startswith(prefix_to_clear):
+                        del st.session_state[k]
 
-        col_split_btns = st.columns([1, 1, 3])
-        with col_split_btns[0]:
-            if st.button("Add Another Split", key=f"{selected_transaction_type}_add_split_btn_outside"):
-                st.session_state[split_key].append({
-                    'amount': 0.0, 'description': '', 'notes': '',
-                    'budget_scope': '', 'category': '', 'sub_category': '',
-                    'full_budget_path': ''
-                })
+                st.session_state[split_key].pop()
                 st.rerun()
-        with col_split_btns[1]:
-            if len(st.session_state[split_key]) > 1:
-                if st.button("Remove Last Split", key=f"{selected_transaction_type}_remove_split_btn_outside"):
-                    # Clear session state for the removed split's category UI to prevent conflicts
-                    prefix_to_clear = f"{selected_transaction_type}_split_{len(st.session_state[split_key]) - 1}_cat_ui"
-                    for k in list(st.session_state.keys()):  # Iterate over a copy of keys
-                        if k.startswith(prefix_to_clear):
-                            del st.session_state[k]
 
-                    st.session_state[split_key].pop()
-                    st.rerun()
+    total_amount_sum = 0.0
 
-        total_amount_sum = 0.0
+    for i, split_data in enumerate(st.session_state[split_key]):
+        st.markdown(f"**Split {i + 1}**")
 
-        for i, split_data in enumerate(st.session_state[split_key]):
-            st.markdown(f"**Split {i + 1}**")
+        split_data['amount'] = st.number_input(
+            "Amount",
+            min_value=0.0,
+            format="%.2f",
+            value=split_data['amount'],
+            key=f"{selected_transaction_type}_split_amount_{i}_outside"
+        )
+        total_amount_sum += split_data['amount']
 
-            split_data['amount'] = st.number_input(
-                "Amount",
-                min_value=0.0,
-                format="%.2f",
-                value=split_data['amount'],
-                key=f"{selected_transaction_type}_split_amount_{i}_outside"
+        cols_desc_notes = st.columns(2)
+        with cols_desc_notes[0]:
+            split_data['description'] = st.text_input(
+                "Description (Split)",
+                value=split_data['description'],
+                key=f"{selected_transaction_type}_split_description_{i}_outside",
+                placeholder="e.g., Specific item, reason for this part of the transaction"
             )
-            total_amount_sum += split_data['amount']
-
-            cols_desc_notes = st.columns(2)
-            with cols_desc_notes[0]:
-                split_data['description'] = st.text_input(
-                    "Description (Split)",
-                    value=split_data['description'],
-                    key=f"{selected_transaction_type}_split_description_{i}_outside",
-                    placeholder="e.g., Specific item, reason for this part of the transaction"
-                )
-            with cols_desc_notes[1]:
-                split_data['notes'] = st.text_area(
-                    "Notes (Split)",
-                    value=split_data['notes'],
-                    key=f"{selected_transaction_type}_split_notes_{i}_outside",
-                    placeholder="Additional notes for this split."
-                )
-
-            st.write("Category for this split:")
-
-            # Determine scope options based on transaction type
-            if selected_transaction_type == "Expense":
-                scope_opts = [s for s in config_manager.get_all_budget_scopes() if s != 'Income']
-            elif selected_transaction_type == "Income":
-                scope_opts = ['Income']
-            else:
-                scope_opts = []
-
-            _display_dynamic_category_selector_ui(
-                structured_categories,
-                scope_opts,
-                session_state_key_prefix=f"{selected_transaction_type}_split_{i}_cat_ui",
+        with cols_desc_notes[1]:
+            split_data['notes'] = st.text_area(
+                "Notes (Split)",
+                value=split_data['notes'],
+                key=f"{selected_transaction_type}_split_notes_{i}_outside",
+                placeholder="Additional notes for this split."
             )
 
-            # Update split_data with values from the category selector's session state
-            # Ensure the session state key for full_budget_path is accessed safely
-            current_full_path = st.session_state.get(f"{selected_transaction_type}_split_{i}_cat_ui_full_budget_path",
-                                                     "")
-            split_data['full_budget_path'] = current_full_path
+        st.write("Category for this split:")
 
-            full_path_parts = current_full_path.split(':')
-            split_data['budget_scope'] = full_path_parts[0] if len(full_path_parts) > 0 else ""
-            split_data['category'] = full_path_parts[1] if len(full_path_parts) > 1 else ""
-            split_data['sub_category'] = full_path_parts[2] if len(full_path_parts) > 2 else ""
+        if selected_transaction_type == "Expense":
+            scope_opts = [s for s in monthly_finance_config_manager.get_all_budget_scopes() if s != 'Income']
+        elif selected_transaction_type == "Income":
+            scope_opts = ['Income']
+        else:
+            scope_opts = []
 
-            st.markdown("---")
+        _display_dynamic_category_selector_ui(
+            structured_categories,
+            scope_opts,
+            session_state_key_prefix=f"{selected_transaction_type}_split_{i}_cat_ui",
+        )
 
-        st.markdown(f"**Calculated Total Amount for Splits: {currency_symbol}{total_amount_sum:.2f}**")
+        current_full_path = st.session_state.get(f"{selected_transaction_type}_split_{i}_cat_ui_full_budget_path", "")
+        split_data['full_budget_path'] = current_full_path
 
-        # --- Additional Metadata Section ---
-        # Initialize manual_metadata_entries if not present, including a placeholder for selected key
-        if 'manual_metadata_entries' not in st.session_state:
-            st.session_state.manual_metadata_entries = [{'key': '', 'value': '', '_selected_from_list_key': ''}]
+        full_path_parts = current_full_path.split(':')
+        split_data['budget_scope'] = full_path_parts[0] if len(full_path_parts) > 0 else ""
+        split_data['category'] = full_path_parts[1] if len(full_path_parts) > 1 else ""
+        split_data['sub_category'] = full_path_parts[2] if len(full_path_parts) > 2 else ""
 
-        with st.expander("Additional Metadata (Optional)"):
-            # Buttons to add/remove metadata rows
-            col_meta_btns = st.columns([1, 1, 3])
-            with col_meta_btns[0]:
-                if st.button("Add Metadata Field", key=f"{selected_transaction_type}_add_meta_btn"):
-                    st.session_state.manual_metadata_entries.append(
-                        {'key': '', 'value': '', '_selected_from_list_key': ''})
+        st.markdown("---")
+
+    st.markdown(f"**Calculated Total Amount for Splits: {currency_symbol}{total_amount_sum:.2f}**")
+
+    # --- Additional Metadata Section ---
+    if 'manual_metadata_entries' not in st.session_state:
+        st.session_state.manual_metadata_entries = [{'key': '', 'value': '', '_selected_from_list_key': ''}]
+
+    with st.expander("Additional Metadata (Optional)"):
+        col_meta_btns = st.columns([1, 1, 3])
+        with col_meta_btns[0]:
+            if st.button("Add Metadata Field", key=f"{selected_transaction_type}_add_meta_btn"):
+                st.session_state.manual_metadata_entries.append(
+                    {'key': '', 'value': '', '_selected_from_list_key': ''})
+                st.rerun()
+        with col_meta_btns[1]:
+            if len(st.session_state.manual_metadata_entries) > 1:
+                if st.button("Remove Last Metadata Field", key=f"{selected_transaction_type}_remove_meta_btn"):
+                    st.session_state.manual_metadata_entries.pop()
                     st.rerun()
-            with col_meta_btns[1]:
-                if len(st.session_state.manual_metadata_entries) > 1:
-                    if st.button("Remove Last Metadata Field", key=f"{selected_transaction_type}_remove_meta_btn"):
-                        st.session_state.manual_metadata_entries.pop()
-                        st.rerun()
 
-            # Display key-value input fields for metadata
-            for i, meta_entry in enumerate(st.session_state.manual_metadata_entries):
-                cols_meta = st.columns([1, 1])
-                with cols_meta[0]:
-                    # Selectbox for existing keys
-                    selected_key_from_list = st.selectbox(
-                        "Metadata Key (Select existing)",
-                        all_unique_metadata_keys,
-                        index=all_unique_metadata_keys.index(
-                            meta_entry['_selected_from_list_key']) if meta_entry[
-                                                                          '_selected_from_list_key'] in all_unique_metadata_keys else 0,
-                        placeholder="Choose from existing keys...",
-                        key=f"{selected_transaction_type}_meta_key_selectbox_{i}"
-                    )
-                    # If selection from box changes AND it's different from current text input, update text input
-                    if selected_key_from_list and selected_key_from_list != meta_entry['_selected_from_list_key']:
-                        meta_entry['_selected_from_list_key'] = selected_key_from_list  # Update internal tracker
-                        meta_entry['key'] = selected_key_from_list  # Set the actual key to selected value
-                        st.rerun()  # Rerun to update the text input
+        # TODO: Verify that the manual input takes precedence over the selected from list.
+        # TODO: Verify that you cannot use the same metadata key multiple times. No need....
+        # TODO: Warn the user in case they have the same metadata in multiple splits. The last will be used. ...
+        #  No need. If they want to enter many time the same, we will save many time the same and it will their pb to sort all out.
+        for i, meta_entry in enumerate(st.session_state.manual_metadata_entries):
+            cols_meta = st.columns([1, 1])
+            with cols_meta[0]:
+                selected_key_from_list = st.selectbox(
+                    "Metadata Key (Select existing)",
+                    all_unique_metadata_keys,
+                    index=all_unique_metadata_keys.index(
+                        meta_entry['_selected_from_list_key']) if meta_entry[
+                                                                      '_selected_from_list_key'] in all_unique_metadata_keys else 0,
+                    placeholder="Choose from existing keys...",
+                    key=f"{selected_transaction_type}_meta_key_selectbox_{i}"
+                )
+                if selected_key_from_list and selected_key_from_list != meta_entry['_selected_from_list_key']:
+                    meta_entry['_selected_from_list_key'] = selected_key_from_list
+                    meta_entry['key'] = selected_key_from_list
+                    st.rerun()
 
-                    # Text input for new/edited key (takes precedence)
-                    meta_entry['key'] = st.text_input(
-                        "Metadata Key (Enter new or edit)",
-                        value=meta_entry['key'],
-                        key=f"{selected_transaction_type}_meta_key_textinput_{i}",
-                        placeholder="e.g., Tax Amount, Payment Method"
-                    )
-                    st.markdown(
-                        "<small style='color: gray;'>The value in the 'Enter new or edit' box will be used.</small>",
-                        unsafe_allow_html=True
-                    )
+                meta_entry['key'] = st.text_input(
+                    "Metadata Key (Enter new or edit)",
+                    value=meta_entry['key'],
+                    key=f"{selected_transaction_type}_meta_key_textinput_{i}",
+                    placeholder="e.g., Tax Amount, Payment Method"
+                )
+                st.markdown(
+                    "<small style='color: gray;'>The value in the 'Enter new or edit' box will be used.</small>",
+                    unsafe_allow_html=True
+                )
 
-                with cols_meta[1]:
-                    meta_entry['value'] = st.text_input(
-                        "Metadata Value",
-                        value=meta_entry['value'],
-                        key=f"{selected_transaction_type}_meta_value_{i}",
-                        placeholder="e.g., 5.25, Credit Card"
-                    )
-        # End of Additional Metadata Section
+            with cols_meta[1]:
+                meta_entry['value'] = st.text_input(
+                    "Metadata Value",
+                    value=meta_entry['value'],
+                    key=f"{selected_transaction_type}_meta_value_{i}",
+                    placeholder="e.g., 5.25, Credit Card"
+                )
+    # End of Additional Metadata Section
 
-        with st.form(key=f"{selected_transaction_type.lower()}_submission_form"):
-            st.write("Click 'Save Transaction' to finalize your entry.")
-            submitted = st.form_submit_button(f"Save {selected_transaction_type} Transaction")
+    with st.form(key=f"single_transaction_submission_form"):  # Unified form
+        st.write("Click 'Save Transaction' to finalize your entry.")
+        submitted = st.form_submit_button("Save Transaction", use_container_width=True)
 
-            if submitted:
-                is_valid = True
+        if submitted:
+            is_valid = True
 
-                # --- NEW VALIDATION: Check payee decision for ambiguous cases ---
-                # Only apply this check if it's an Expense/Income transaction AND an ambiguous suggestion was made
-                # and the decision hasn't been explicitly made by the user yet.
-                if selected_transaction_type in ["Expense", "Income"] and st.session_state.get(
-                        'payee_suggestion_result'):
-                    if st.session_state.payee_suggestion_result[
-                        'status'] == 'AMBIGUOUS' and not st.session_state.payee_decision_made:
-                        st.error("Please confirm or reject the suggested payee before saving.")
-                        is_valid = False
-                # --- END NEW VALIDATION ---
-
-                if not st.session_state.global_transaction_data['payee']:
-                    st.error("Overall Payer/Payee is required.")
-                    is_valid = False
-                if not st.session_state.global_transaction_data['account']:
-                    st.error("Overall Account is required.")
+            if selected_transaction_type in ["Expense", "Income"] and st.session_state.get('payee_suggestion_result'):
+                if st.session_state.payee_suggestion_result[
+                    'status'] == 'AMBIGUOUS' and not st.session_state.payee_decision_made:
+                    st.error("Please confirm or reject the suggested payee before saving.")
                     is_valid = False
 
-                if total_amount_sum <= 0:
-                    st.error("Total amount of splits must be positive.")
-                    is_valid = False
+            if not st.session_state.global_transaction_data['payee']:
+                st.error("Overall Payer/Payee is required.")
+                is_valid = False
+            if not st.session_state.global_transaction_data['account']:
+                st.error("Overall Account is required.")
+                is_valid = False
 
-                # Validate metadata entries
-                cleaned_metadata = []
-                for meta_entry in st.session_state.manual_metadata_entries:
-                    key = meta_entry['key'].strip()  # Use the text input value for the key
-                    value = meta_entry['value'].strip()
-                    if key and value:  # Only add if both key and value are non-empty
-                        cleaned_metadata.append({'key': key, 'value': value})
-                    elif key or value:  # If one is present but not the other
-                        st.warning(
-                            f"Metadata field found with only a key or a value (Key: '{key}', Value: '{value}'). Ignoring incomplete entry.")
+            if total_amount_sum <= 0 and selected_transaction_type != "Transfer":
+                st.error("Total amount of splits must be positive for Expense/Income.")
+                is_valid = False
 
-                # Assign cleaned metadata back to session state to reflect what will be saved
-                st.session_state.global_transaction_data['manual_metadata'] = cleaned_metadata
+            cleaned_metadata = []
+            for meta_entry in st.session_state.manual_metadata_entries:
+                key = meta_entry['key'].strip()
+                value = meta_entry['value'].strip()
+                if key and value:
+                    cleaned_metadata.append({'key': key, 'value': value})
+                elif key or value:
+                    st.warning(
+                        f"Metadata field found with only a key or a value (Key: '{key}', Value: '{value}'). Ignoring incomplete entry.")
 
+            st.session_state.global_transaction_data['manual_metadata'] = cleaned_metadata
+
+            if selected_transaction_type != "Transfer":
                 for i, split_data in enumerate(st.session_state[split_key]):
                     if split_data['amount'] <= 0:
                         st.error(f"Split {i + 1}: Amount must be positive.")
@@ -635,32 +757,44 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                     if not split_data['description']:
                         st.error(f"Split {i + 1}: Description is required.")
                         is_valid = False
-                    # Check if full_budget_path is not just the scope
-                    if not split_data['full_budget_path'] or split_data['full_budget_path'].count(
-                            ':') < 1:  # Ensure at least Scope:Category
+                    if not split_data['full_budget_path'] or split_data['full_budget_path'].count(':') < 1:
                         st.error(f"Split {i + 1}: A specific category path (e.g., Scope:Category) is required.")
                         is_valid = False
 
-                    # Ensure income transactions are categorized under 'Income' scope
                     if selected_transaction_type == "Income" and not split_data['full_budget_path'].startswith(
                             "Income:"):
                         st.error(f"Split {i + 1}: Income transactions must be categorized under an 'Income' path.")
                         is_valid = False
-                    # Ensure expense transactions are NOT categorized under 'Income' scope
                     elif selected_transaction_type == "Expense" and split_data['full_budget_path'].startswith(
                             "Income:"):
                         st.error(f"Split {i + 1}: Expense transactions cannot be categorized under an 'Income' path.")
                         is_valid = False
+            else:  # Transfer specific validation
+                amount = st.session_state.transfer_data['amount']
+                source_account_name = st.session_state.transfer_data['source_account']
+                destination_account_name = st.session_state.transfer_data['destination_account']
+                if amount <= 0 or not source_account_name or not destination_account_name:
+                    st.error("A positive Amount, 'From Account', and 'To Account' are required for Transfer.")
+                    is_valid = False
+                elif source_account_name == destination_account_name:
+                    st.error("Source and Destination accounts cannot be the same for Transfer.")
+                    is_valid = False
+                elif not st.session_state.transfer_data['full_budget_path'] or \
+                        st.session_state.transfer_data['full_budget_path'].count(':') < 1:
+                    st.error(
+                        "A valid budget path (e.g., 'Transfer:Transfer' or 'Personal:Savings') is required for transfers.")
+                    is_valid = False
 
-                if is_valid:
-                    try:
+            if is_valid:
+                try:
+                    if selected_transaction_type in ["Expense", "Income"]:
                         splits_for_manager = []
                         for split_data in st.session_state[split_key]:
                             splits_for_manager.append({
                                 'amount': split_data['amount'],
                                 'description': split_data['description'],
                                 'notes': split_data['notes'],
-                                'payee': st.session_state.global_transaction_data['payee'],  # Pass the conformed payee
+                                'payee': st.session_state.global_transaction_data['payee'],
                                 'account': st.session_state.global_transaction_data['account'],
                                 'budget_scope': split_data['budget_scope'],
                                 'category': split_data['category'],
@@ -668,269 +802,34 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                                 'full_budget_path': split_data['full_budget_path']
                             })
 
-                        # Pass the collected metadata to the transaction manager
                         transaction_manager.add_manual_transaction(
                             transaction_id=st.session_state.current_transaction_id,
                             transaction_type=selected_transaction_type,
                             date=st.session_state.global_transaction_data['date'],
-                            payee=st.session_state.global_transaction_data['payee'],  # Pass the conformed payee
+                            payee=st.session_state.global_transaction_data['payee'],
                             account=st.session_state.global_transaction_data['account'],
-                            uploaded_file=uploaded_file,
+                            uploaded_file=st.session_state.global_transaction_data['uploaded_file'],
+                            # Pass the attached file
                             splits=splits_for_manager,
                             manual_metadata=st.session_state.global_transaction_data['manual_metadata']
                         )
                         st.success(
                             f"{selected_transaction_type} transaction saved successfully with ID: **{st.session_state.current_transaction_id}**")
 
-                        # Reset form fields and session state after successful submission
-                        st.session_state[split_key] = [{
-                            'amount': 0.0, 'description': '', 'notes': '',
-                            'budget_scope': '', 'category': '', 'sub_category': '',
-                            'full_budget_path': ''
-                        }]
-                        st.session_state.global_transaction_data = {
-                            'date': datetime.date.today(), 'payee': '', 'account': '', 'uploaded_file': None,
-                            'manual_metadata': []  # Reset metadata after successful submission
-                        }
-                        # Clear payee suggestion/decision state
-                        st.session_state.payee_suggestion_result = None
-                        st.session_state.payee_decision_made = True
-                        st.session_state.raw_payee_input_original = ''
+                    elif selected_transaction_type == "Transfer":
+                        amount = st.session_state.transfer_data['amount']
+                        source_account_name = st.session_state.transfer_data['source_account']
+                        destination_account_name = st.session_state.transfer_data['destination_account']
+                        description = st.session_state.transfer_data['description']
+                        notes = st.session_state.transfer_data['notes']
+                        transfer_payee = st.session_state.global_transaction_data['payee']
+                        if not transfer_payee:
+                            transfer_payee = f"Transfer to {destination_account_name}" if destination_account_name else "Transfer"
 
-                        # Clear category selector state for transfer
-                        for key in list(st.session_state.keys()):
-                            if '_cat_ui' in key:
-                                del st.session_state[key]
-                        # Reset the metadata input fields by clearing their session state
-                        if 'manual_metadata_entries' in st.session_state:
-                            del st.session_state['manual_metadata_entries']
-
-                        st.session_state.current_transaction_id = f"TRN-{int(datetime.datetime.now().timestamp())}-{uuid.uuid4().hex[:6].upper()}"
-                        st.rerun()
-
-                    except Exception as e:
-                        st.error(f"Failed to save {selected_transaction_type} transaction: {e}")
-
-    elif selected_transaction_type == "Transfer":
-        st.markdown("---")
-        st.subheader("Transfer Details")
-
-        if 'transfer_data' not in st.session_state:
-            st.session_state.transfer_data = {
-                'date': datetime.date.today(),
-                'amount': 0.0,
-                'source_account': '',
-                'destination_account': '',
-                'description': '',
-                'notes': '',
-                'budget_scope': '',
-                'category': '',
-                'sub_category': '',
-                'full_budget_path': ''
-            }
-            # Initialize transfer category UI session state with a default if 'Transfer' scope exists
-            # This ensures a default path like 'Transfer:Transfer' is pre-selected if available
-            if 'Transfer' in structured_categories:
-                st.session_state['transfer_cat_ui_budget_scope'] = "Transfer"
-                st.session_state['transfer_cat_ui_category_path_elements'] = ["Transfer",
-                                                                              "Transfer"]  # Default to Transfer:Transfer
-                st.session_state['transfer_cat_ui_full_budget_path'] = "Transfer:Transfer"
-            else:  # Fallback if 'Transfer' scope is not defined in financial_config
-                st.session_state['transfer_cat_ui_budget_scope'] = ""
-                st.session_state['transfer_cat_ui_category_path_elements'] = []
-                st.session_state['transfer_cat_ui_full_budget_path'] = ""
-
-            st.rerun()
-
-        st.session_state.transfer_data['date'] = st.date_input(
-            "Date",
-            st.session_state.transfer_data['date'],
-            key="transfer_date_input"
-        )
-
-        col1, col2 = st.columns(2)
-        with col1:
-            st.session_state.transfer_data['amount'] = st.number_input(
-                "Amount",
-                min_value=0.0,
-                format="%.2f",
-                value=st.session_state.transfer_data['amount'],
-                key="transfer_amount_outside"
-            )
-
-            # Source Account Selector
-            source_acc_idx = next((i for i, opt in enumerate(account_options) if
-                                   _get_account_name_from_display(opt) == st.session_state.transfer_data[
-                                       'source_account']), 0)
-            source_account_display = st.selectbox(
-                "From Account",
-                account_options,
-                index=source_acc_idx,
-                placeholder="Choose source account...",
-                key="transfer_source_acc_outside"
-            )
-            st.session_state.transfer_data['source_account'] = _get_account_name_from_display(source_account_display)
-
-            st.session_state.transfer_data['description'] = st.text_input(
-                "Description (Transfer)",
-                value=st.session_state.transfer_data['description'],
-                key="transfer_description_outside",
-                placeholder="e.g., Transfer to savings for vacation"
-            )
-
-        with col2:
-            # Destination Account Selector
-            dest_acc_idx = next((i for i, opt in enumerate(account_options) if
-                                 _get_account_name_from_display(opt) == st.session_state.transfer_data[
-                                     'destination_account']), 0)
-            destination_account_display = st.selectbox(
-                "To Account",
-                account_options,
-                index=dest_acc_idx,
-                placeholder="Choose destination account...",
-                key="transfer_dest_acc_outside"
-            )
-            st.session_state.transfer_data['destination_account'] = _get_account_name_from_display(
-                destination_account_display)
-
-            st.session_state.transfer_data['notes'] = st.text_area(
-                "Notes (Transfer)",
-                value=st.session_state.transfer_data['notes'],
-                key="transfer_notes_outside",
-                placeholder="Any additional notes about this transfer."
-            )
-
-            st.write("Category for this transfer:")
-            # Use full structured_categories for transfers
-            # Allow selection from all available scopes, user can choose 'Transfer' or another relevant category
-            _display_dynamic_category_selector_ui(
-                structured_categories,
-                config_manager.get_all_budget_scopes(),  # Pass all top-level scopes
-                session_state_key_prefix="transfer_cat_ui",
-            )
-            # Update transfer_data with values from the category selector's session state
-            current_full_path_transfer = st.session_state.get("transfer_cat_ui_full_budget_path", "")
-            st.session_state.transfer_data['full_budget_path'] = current_full_path_transfer
-
-            full_path_parts_transfer = current_full_path_transfer.split(':')
-            st.session_state.transfer_data['budget_scope'] = full_path_parts_transfer[0] if len(
-                full_path_parts_transfer) > 0 else ""
-            st.session_state.transfer_data['category'] = full_path_parts_transfer[1] if len(
-                full_path_parts_transfer) > 1 else ""
-            st.session_state.transfer_data['sub_category'] = full_path_parts_transfer[2] if len(
-                full_path_parts_transfer) > 2 else ""
-
-        # --- Additional Metadata Section for Transfers ---
-        # Initialize manual_metadata_entries if not present, including a placeholder for selected key
-        if 'manual_metadata_entries' not in st.session_state:  # Use the same metadata state as for splits
-            st.session_state.manual_metadata_entries = [{'key': '', 'value': '', '_selected_from_list_key': ''}]
-
-        with st.expander("Additional Metadata (Optional)"):
-            col_meta_btns = st.columns([1, 1, 3])
-            with col_meta_btns[0]:
-                if st.button("Add Metadata Field", key="transfer_add_meta_btn"):
-                    st.session_state.manual_metadata_entries.append(
-                        {'key': '', 'value': '', '_selected_from_list_key': ''})
-                    st.rerun()
-            with col_meta_btns[1]:
-                if len(st.session_state.manual_metadata_entries) > 1:
-                    if st.button("Remove Last Metadata Field", key="transfer_remove_meta_btn"):
-                        st.session_state.manual_metadata_entries.pop()
-                        st.rerun()
-
-            for i, meta_entry in enumerate(st.session_state.manual_metadata_entries):
-                cols_meta = st.columns([1, 1])
-                with cols_meta[0]:
-                    # Selectbox for existing keys
-                    selected_key_from_list = st.selectbox(
-                        "Metadata Key (Select existing)",
-                        all_unique_metadata_keys,
-                        index=all_unique_metadata_keys.index(
-                            meta_entry['_selected_from_list_key']) if meta_entry[
-                                                                          '_selected_from_list_key'] in all_unique_metadata_keys else 0,
-                        placeholder="Choose from existing keys...",
-                        key=f"transfer_meta_key_selectbox_{i}"
-                    )
-                    # If selection from box changes AND it's different from current text input, update text input
-                    if selected_key_from_list and selected_key_from_list != meta_entry['_selected_from_list_key']:
-                        meta_entry['_selected_from_list_key'] = selected_key_from_list  # Update internal tracker
-                        meta_entry['key'] = selected_key_from_list  # Set the actual key to selected value
-                        st.rerun()  # Rerun to update the text input
-
-                    # Text input for new/edited key (takes precedence)
-                    meta_entry['key'] = st.text_input(
-                        "Metadata Key (Enter new or edit)",
-                        value=meta_entry['key'],
-                        key=f"transfer_meta_key_textinput_{i}",
-                        placeholder="e.g., Transfer Fee, Reason"
-                    )
-                    st.markdown(
-                        "<small style='color: gray;'>The value in the 'Enter new or edit' box will be used.</small>",
-                        unsafe_allow_html=True
-                    )
-                with cols_meta[1]:
-                    meta_entry['value'] = st.text_input(
-                        "Metadata Value",
-                        value=meta_entry['value'],
-                        key=f"transfer_meta_value_{i}",
-                        placeholder="e.g., 0.50, Investment"
-                    )
-        # End of Additional Metadata Section
-
-        with st.form(key="transfer_submission_form"):
-            st.write("Click 'Save Transfer' to finalize your entry.")
-            submitted = st.form_submit_button("Save Transfer")
-
-            if submitted:
-                amount = st.session_state.transfer_data['amount']
-                source_account_name = st.session_state.transfer_data['source_account']
-                destination_account_name = st.session_state.transfer_data['destination_account']
-                description = st.session_state.transfer_data['description']
-                notes = st.session_state.transfer_data['notes']
-                # The payee for a transfer can be set to the overall payee or a default
-                transfer_payee = st.session_state.global_transaction_data['payee']
-                if not transfer_payee:  # If overall payee was not entered for transfer, use a generic one
-                    transfer_payee = f"Transfer to {destination_account_name}" if destination_account_name else "Transfer"
-
-                is_valid = True
-                if amount <= 0 or not source_account_name or not destination_account_name:
-                    st.error("A positive Amount, 'From Account', and 'To Account' are required for Transfer.")
-                    is_valid = False
-                elif source_account_name == destination_account_name:
-                    st.error("Source and Destination accounts cannot be the same for Transfer.")
-                    is_valid = False
-                # Validate the selected transfer path
-                elif not st.session_state.transfer_data['full_budget_path'] or \
-                        st.session_state.transfer_data['full_budget_path'].count(
-                            ':') < 1:  # Ensure at least Scope:Category
-                    st.error(
-                        "A valid budget path (e.g., 'Transfer:Transfer' or 'Personal:Savings') is required for transfers.")
-                    is_valid = False
-
-                # Validate metadata entries
-                cleaned_metadata = []
-                for meta_entry in st.session_state.manual_metadata_entries:
-                    key = meta_entry['key'].strip()
-                    value = meta_entry['value'].strip()
-                    if key and value:  # Only add if both key and value are non-empty
-                        cleaned_metadata.append({'key': key, 'value': value})
-                    elif key or value:  # If one is present but not the other
-                        st.warning(
-                            f"Metadata field found with only a key or a value (Key: '{key}', Value: '{value}'). Ignoring incomplete entry.")
-
-                # Assign cleaned metadata back to session state to reflect what will be saved
-                st.session_state.global_transaction_data['manual_metadata'] = cleaned_metadata
-
-                if is_valid:
-                    try:
-                        related_transaction_id_for_transfer = st.session_state.current_transaction_id
-
-                        # Create two splits for a transfer: one debit from source, one credit to destination
-                        # Both splits share the same transaction_id to link them
                         transfer_splits = [
                             {
                                 'description': description or f"Transfer from {source_account_name} to {destination_account_name}",
-                                'amount': -amount,  # Debit from source account
+                                'amount': -amount,
                                 'payee': transfer_payee,
                                 'account': source_account_name,
                                 'notes': notes,
@@ -941,7 +840,7 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                             },
                             {
                                 'description': description or f"Transfer to {destination_account_name} from {source_account_name}",
-                                'amount': amount,  # Credit to destination account
+                                'amount': amount,
                                 'payee': transfer_payee,
                                 'account': destination_account_name,
                                 'notes': notes,
@@ -953,45 +852,43 @@ def display_manual_entry_tab(transaction_manager: TransactionManager, config_man
                         ]
 
                         transaction_manager.add_manual_transaction(
-                            transaction_id=related_transaction_id_for_transfer,
+                            transaction_id=st.session_state.current_transaction_id,
                             transaction_type="Transfer",
                             date=st.session_state.transfer_data['date'],
                             payee=transfer_payee,
                             account=source_account_name,
-                            uploaded_file=uploaded_file,
+                            uploaded_file=st.session_state.global_transaction_data['uploaded_file'],
+                            # Pass the attached file
                             splits=transfer_splits,
                             manual_metadata=st.session_state.global_transaction_data['manual_metadata']
                         )
                         st.success(
-                            f"Transfer transaction saved successfully with ID: **{related_transaction_id_for_transfer}**")
+                            f"Transfer transaction saved successfully with ID: **{st.session_state.current_transaction_id}**")
 
-                        # Reset form fields and session state after successful submission
-                        st.session_state.transfer_data = {
-                            'date': datetime.date.today(), 'amount': 0.0, 'source_account': '',
-                            'destination_account': '',
-                            'description': '', 'notes': '',
-                            'budget_scope': '', 'category': '', 'sub_category': '',
-                            'full_budget_path': ''
-                        }
-                        st.session_state.global_transaction_data = {
-                            'date': datetime.date.today(), 'payee': '', 'account': '', 'uploaded_file': None,
-                            'manual_metadata': []  # Reset metadata after successful submission
-                        }
-                        # Clear payee suggestion/decision state
-                        st.session_state.payee_suggestion_result = None
-                        st.session_state.payee_decision_made = True
-                        st.session_state.raw_payee_input_original = ''
+                    # Reset states after successful save for all transaction types
+                    st.session_state.global_transaction_data = {
+                        'date': datetime.date.today(), 'payee': '', 'account': '', 'uploaded_file': None,
+                        'manual_metadata': []
+                    }
+                    st.session_state.payee_suggestion_result = None
+                    st.session_state.payee_decision_made = True
+                    st.session_state.raw_payee_input_original = ''
+                    st.session_state.extracted_invoice_data = None  # Clear extracted data after saving
 
-                        # Clear category selector state for transfer
-                        for key in list(st.session_state.keys()):
-                            if '_cat_ui' in key:
-                                del st.session_state[key]
-                        # Reset the metadata input fields by clearing their session state
-                        if 'manual_metadata_entries' in st.session_state:
-                            del st.session_state['manual_metadata_entries']
+                    if 'expense_splits' in st.session_state: del st.session_state['expense_splits']
+                    if 'income_splits' in st.session_state: del st.session_state['income_splits']
+                    if 'transfer_data' in st.session_state: del st.session_state['transfer_data']
 
-                        st.session_state.current_transaction_id = f"TRN-{int(datetime.datetime.now().timestamp())}-{uuid.uuid4().hex[:6].upper()}"
-                        st.rerun()
+                    for key in list(st.session_state.keys()):
+                        if '_cat_ui' in key:
+                            del st.session_state[key]
+                    if 'manual_metadata_entries' in st.session_state:
+                        del st.session_state['manual_metadata_entries']
+                    if 'general_payee_text_input' in st.session_state:
+                        del st.session_state['general_payee_text_input']
 
-                    except Exception as e:
-                        st.error(f"Failed to save Transfer transaction: {e}")
+                    st.session_state.current_transaction_id = f"TRN-{int(datetime.datetime.now().timestamp())}-{uuid.uuid4().hex[:6].upper()}"
+                    st.rerun()
+
+                except Exception as e:
+                    st.error(f"Failed to save transaction: {e}")

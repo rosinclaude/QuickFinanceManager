@@ -83,7 +83,7 @@ class CSVManager:
             column_types = {
                 'TransactionID': str,
                 'SplitIndex': int,
-                'Date': str,  # Read as string and parse later if needed
+                'Date': str,  # Read as string, then convert to datetime.date
                 'Time': str,
                 'Payer/Payee': str,
                 'Account': str,
@@ -105,7 +105,7 @@ class CSVManager:
                 'LLMConfidence': float,
                 'IsVerified': bool,
                 'Notes': str,
-                'TimestampAdded': str  # Read as string and parse later if needed
+                'TimestampAdded': str  # Read as string, then convert to datetime
             }
 
             df = pd.read_csv(self.transactions_csv_path, dtype=column_types)
@@ -124,8 +124,13 @@ class CSVManager:
                         df[col] = False
 
             # Convert date columns using errors='coerce' to turn unparseable dates into NaT
-            df['Date'] = pd.to_datetime(df['Date'], errors='coerce').dt.date
+            df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+            # Convert to date objects, handling NaT values
+            df['Date'] = df['Date'].apply(lambda x: x.date() if pd.notna(x) else None)
+
             df['TimestampAdded'] = pd.to_datetime(df['TimestampAdded'], errors='coerce')
+            # Ensure TimestampAdded explicitly stores None for NaT for consistency in memory
+            df['TimestampAdded'] = df['TimestampAdded'].apply(lambda x: x if pd.notna(x) else None)
 
             # Fill NaN values after type conversion for consistency
             for col in ['Time', 'Payer/Payee', 'Account', 'Description', 'Currency', 'BudgetScope', 'Category',
@@ -138,10 +143,6 @@ class CSVManager:
                 if col in df.columns:
                     df[col] = df[col].fillna(False)
 
-            # Fill NaT for date/datetime columns to prevent errors in operations
-            df['Date'] = df['Date'].apply(lambda x: x if pd.notna(x) else None)
-            df['TimestampAdded'] = df['TimestampAdded'].apply(lambda x: x if pd.notna(x) else None)
-
             return df
         except pd.errors.EmptyDataError:
             print(f"Transactions CSV is empty. Returning empty DataFrame with headers.")
@@ -153,13 +154,22 @@ class CSVManager:
 
     def save_transactions(self, df: pd.DataFrame):
         """Saves transaction data to the CSV file."""
+        # Create a copy to avoid modifying the original DataFrame in place before saving
+        df_to_save = df.copy()
+
         # Convert datetime.date objects in 'Date' column to string for saving
-        # and datetime objects in 'TimestampAdded' to string
-        df['Date'] = df['Date'].apply(lambda x: x.isoformat() if x is not None else '')
-        df['TimestampAdded'] = df['TimestampAdded'].apply(lambda x: x.isoformat() if x is not None else '')
+        df_to_save['Date'] = df_to_save['Date'].apply(
+            lambda x: x.isoformat() if x is not None else ''  # x is datetime.date or None
+        )
+
+        # Handle datetime objects and NaT in 'TimestampAdded' to string,
+        # ensuring conversion to datetime type first for robustness
+        df_to_save['TimestampAdded'] = pd.to_datetime(df_to_save['TimestampAdded'], errors='coerce').apply(
+            lambda x: x.isoformat() if pd.notna(x) else ''  # x is Timestamp or NaT
+        )
 
         try:
-            df.to_csv(self.transactions_csv_path, index=False)
+            df_to_save.to_csv(self.transactions_csv_path, index=False)
             print(f"Transactions saved to {self.transactions_csv_path}")
         except Exception as e:
             print(f"Error saving transactions CSV: {e}")
@@ -179,7 +189,7 @@ class CSVManager:
                 'RelatedSavingsAccount': str,
                 'IsSubscription': bool,
                 'Notes': str,
-                'LastUpdated': str  # Read as string and parse later
+                'LastUpdated': str
             }
             df = pd.read_csv(self.payees_csv_path, dtype=payee_column_types)
 
@@ -193,6 +203,7 @@ class CSVManager:
                         df[col] = False
 
             df['LastUpdated'] = pd.to_datetime(df['LastUpdated'], errors='coerce')
+            df['LastUpdated'] = df['LastUpdated'].apply(lambda x: x if pd.notna(x) else None)
 
             for col in ['Name', 'Aliases', 'DefaultCategory', 'DefaultSubCategory',
                         'DefaultAccount', 'DefaultTransactionType', 'RelatedDebtAccount',
@@ -202,8 +213,6 @@ class CSVManager:
 
             if 'IsSubscription' in df.columns:
                 df['IsSubscription'] = df['IsSubscription'].fillna(False)
-
-            df['LastUpdated'] = df['LastUpdated'].apply(lambda x: x if pd.notna(x) else None)
 
             return df
         except pd.errors.EmptyDataError:
@@ -216,20 +225,27 @@ class CSVManager:
 
     def save_payees(self, df: pd.DataFrame):
         """Saves payee data to the CSV file."""
+        df_to_save = df.copy()
+
         # Ensure 'LastUpdated' column is always up-to-date and in string format
-        if 'LastUpdated' in df.columns:
-            df['LastUpdated'] = datetime.datetime.now().isoformat()
-        else:
-            df['LastUpdated'] = datetime.datetime.now().isoformat()
+        if 'LastUpdated' in df_to_save.columns:
+            # Convert to datetime first for robustness
+            df_to_save['LastUpdated'] = pd.to_datetime(df_to_save['LastUpdated'], errors='coerce')
+            # If a value is NaT/None, set it to now. Otherwise, use its current value (which should be datetime)
+            df_to_save['LastUpdated'] = df_to_save['LastUpdated'].apply(
+                lambda x: datetime.datetime.now().isoformat() if pd.isna(x) else x.isoformat()
+            )
+        else:  # If column doesn't exist, create it with current timestamp
+            df_to_save['LastUpdated'] = datetime.datetime.now().isoformat()
 
         try:
-            df.to_csv(self.payees_csv_path, index=False)
+            df_to_save.to_csv(self.payees_csv_path, index=False)
             print(f"Payees saved to {self.payees_csv_path}")
         except Exception as e:
             print(f"Error saving payees CSV: {e}")
             raise
 
-    def load_metadata(self) -> pd.DataFrame:  # NEW METHOD
+    def load_metadata(self) -> pd.DataFrame:
         """Loads metadata from the CSV file."""
         try:
             metadata_column_types = {
@@ -245,9 +261,10 @@ class CSVManager:
             for col, d_type in metadata_column_types.items():
                 if col not in df.columns:
                     print(f"Column '{col}' not found in metadata CSV. Adding with default values.")
-                    df[col] = '' if d_type == str else (0 if d_type == int else '')  # int for SplitIndex
+                    df[col] = '' if d_type == str else (0 if d_type == int else '')
             df['TimestampAdded'] = pd.to_datetime(df['TimestampAdded'], errors='coerce')
             df['TimestampAdded'] = df['TimestampAdded'].apply(lambda x: x if pd.notna(x) else None)
+
             for col in ['TransactionID', 'Key', 'Value', 'Source']:
                 if col in df.columns: df[col] = df[col].fillna('')
             return df
@@ -259,11 +276,17 @@ class CSVManager:
             print(f"Error loading metadata CSV: {e}")
             raise
 
-    def save_metadata(self, df: pd.DataFrame):  # NEW METHOD
+    def save_metadata(self, df: pd.DataFrame):
         """Saves metadata to the CSV file."""
-        df['TimestampAdded'] = pd.to_datetime(df['TimestampAdded']).apply(lambda x: x.isoformat() if x is not None else '')
+        df_to_save = df.copy()
+
+        # Ensure TimestampAdded is datetime-like before converting to isoformat string
+        df_to_save['TimestampAdded'] = pd.to_datetime(df_to_save['TimestampAdded'], errors='coerce')
+        df_to_save['TimestampAdded'] = df_to_save['TimestampAdded'].apply(
+            lambda x: x.isoformat() if pd.notna(x) else ''
+        )
         try:
-            df.to_csv(self.metadata_csv_path, index=False)
+            df_to_save.to_csv(self.metadata_csv_path, index=False)
             print(f"Metadata saved to {self.metadata_csv_path}")
         except Exception as e:
             print(f"Error saving metadata CSV: {e}")

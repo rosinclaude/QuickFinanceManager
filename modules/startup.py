@@ -16,7 +16,7 @@ def initialize_session_state():
     if 'config_manager' not in st.session_state:
         # Assuming your project structure has 'configs' at the root level relative to 'modules'
         project_root = os.path.join(os.path.dirname(__file__), '..')
-        st.session_state.config_manager = ConfigManager(project_root)
+        st.session_state.monthly_finance_config_manager = ConfigManager(project_root)
 
     # Flags for managing initial checks and UI flow
     if 'initial_consistency_check_done' not in st.session_state:
@@ -31,7 +31,7 @@ def initialize_session_state():
     # Initialize edited_default_financial_config and original_default_financial_config here
     # to ensure they are always available.
     if 'original_default_financial_config' not in st.session_state:
-        st.session_state.original_default_financial_config = st.session_state.config_manager.load_default_financial_config()
+        st.session_state.original_default_financial_config = st.session_state.monthly_finance_config_manager.load_default_financial_config()
 
     if 'edited_default_financial_config' not in st.session_state:
         # Use deepcopy to ensure that editing 'edited_default_financial_config'
@@ -40,7 +40,7 @@ def initialize_session_state():
 
     # Initialize app_config
     if 'app_config' not in st.session_state:
-        st.session_state.app_config = st.session_state.config_manager.load_app_config()
+        st.session_state.app_config = st.session_state.monthly_finance_config_manager.load_app_config()
 
     # --- Initialize states for deletion confirmation dialog ---
     if 'item_to_delete' not in st.session_state:
@@ -100,7 +100,7 @@ def perform_initial_checks():
 
         # Load configs fresh for the consistency check
         try:
-            st.session_state.consistency_report = st.session_state.config_manager.check_config_consistency()
+            st.session_state.consistency_report = st.session_state.monthly_finance_config_manager.check_config_consistency()
 
             # Optional: Print to console for server-side logging
             if st.session_state.consistency_report:
