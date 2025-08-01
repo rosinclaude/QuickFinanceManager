@@ -7,9 +7,10 @@ import uuid
 import os
 
 from .csv_manager import CSVManager
-from .finance_config_manager import MonthlyFinanceConfigManager # Corrected import
+from .finance_config_manager import MonthlyFinanceConfigManager
 from .payee_manager import PayeeManager
 from .metadata_manager import MetadataManager
+from .photo_manager import PhotoManager  # NEW: Import PhotoManager
 from modules.automation.ocr_processor import OCRProcessor
 from modules.automation.invoice_parser import InvoiceParser
 from modules.automation.hybrid_categorizer import HybridCategorizer
@@ -26,7 +27,8 @@ class TransactionManager:
 
     def __init__(self, csv_manager: CSVManager, monthly_finance_config_manager: MonthlyFinanceConfigManager,
                  payee_manager: PayeeManager, metadata_manager: MetadataManager,
-                 app_config: Dict[str, Any]):  # Accept app_config here
+                 photo_manager: PhotoManager,  # NEW: Accept PhotoManager
+                 app_config: Dict[str, Any]):
         """
         Initializes the TransactionManager.
         Args:
@@ -34,15 +36,17 @@ class TransactionManager:
             monthly_finance_config_manager (MonthlyFinanceConfigManager): An instance of FinanceConfigManager to access financial configuration.
             payee_manager (PayeeManager): An instance of PayeeManager to manage payee data.
             metadata_manager (MetadataManager): An instance of MetadataManager to store extra transaction details.
+            photo_manager (PhotoManager): An instance of PhotoManager to manage associated photos. # NEW
             app_config (Dict[str, Any]): The loaded application configuration dictionary.
         """
         self.csv_manager = csv_manager
-        self.monthly_finance_config_manager = monthly_finance_config_manager  # Renamed for consistency with self.config_manager
+        self.monthly_finance_config_manager = monthly_finance_config_manager
         self.payee_manager = payee_manager
         self.metadata_manager = metadata_manager
-        self.app_config = app_config  # Store app_config
+        self.photo_manager = photo_manager  # NEW: Store PhotoManager
+        self.app_config = app_config
 
-        # Paths from app_config for I/O operations
+        # Paths from app_config for I/O operations (these are now primarily for OCR/parsing temp, or legacy)
         self.input_raw_dir = self.app_config.get('paths', {}).get('invoice_input_dir', 'data/invoices/input')
         self.input_processed_dir = self.app_config.get('paths', {}).get('invoice_processed_dir', 'data/invoices/processed')
         self.input_failed_dir = self.app_config.get('paths', {}).get('invoice_failed_dir', 'data/invoices/failed')
@@ -53,8 +57,8 @@ class TransactionManager:
             vendor_patterns_file=self.app_config['paths']['vendor_patterns_file'],
             llm_model_name=llm_config.get('vendor_fuzzy_match_model', 'all-MiniLM-L6-v2'),
             llm_similarity_threshold=llm_config.get('vendor_fuzzy_match_threshold', 0.85),
-            llm_ambiguity_threshold=llm_config.get('vendor_fuzzy_match_ambiguity_threshold', 0.65), # NEW
-            payee_manager=self.payee_manager, # NEW
+            llm_ambiguity_threshold=llm_config.get('vendor_fuzzy_match_ambiguity_threshold', 0.65),
+            payee_manager=self.payee_manager,
         )
 
         # OCRProcessor initialization, passing relevant app_config parts
@@ -108,7 +112,7 @@ class TransactionManager:
                                date: datetime.date,
                                payee: str, # This payee is now assumed to be the final, conformed name
                                account: str,
-                               uploaded_file=None,
+                               uploaded_files: List[Any] = None, # Corrected: Expect a list of files
                                splits: list = None,
                                related_transaction_id: str = "",
                                manual_metadata: Optional[List[Dict[str, Any]]] = None
@@ -124,18 +128,14 @@ class TransactionManager:
 
         try:
             file_path = ""
-            if uploaded_file is not None:
-                # Use configured path from app_config
-                save_dir = self.input_raw_dir
-                os.makedirs(save_dir, exist_ok=True)
+            # For manual transactions, if file(s) are uploaded, save them via PhotoManager
+            if uploaded_files: # Corrected: Check if the list is not empty
+                saved_paths = self.photo_manager.save_photos_for_transaction(transaction_id, uploaded_files) # Corrected: Pass list directly
+                if saved_paths:
+                    file_path = saved_paths[0] # Store the path of the first saved photo
+                else:
+                    print("No photo was saved for this manual transaction.")
 
-                file_extension = os.path.splitext(uploaded_file.name)[1]
-                unique_filename = f"{transaction_id}{file_extension}"
-                file_path = os.path.join(save_dir, unique_filename)
-
-                with open(file_path, "wb") as f:
-                    f.write(uploaded_file.getbuffer())
-                print(f"Saved uploaded file to: {file_path}")
 
             transactions_to_add = []
 
@@ -207,7 +207,7 @@ class TransactionManager:
                     "SplitIndex": i,
                     "Date": date,
                     "Time": datetime.datetime.now().strftime("%H:%M:%S"),
-                    "Payer/Payee": effective_payee_uuid, # Use Payee UUID here as per your file
+                    "Payer/Payee": effective_payee_uuid,
                     "Account": effective_account,
                     "Description": split_description,
                     "Amount": split_amount,
@@ -223,10 +223,9 @@ class TransactionManager:
                     "IsSubscription": False,
                     "SubscriptionAutoIdentified": False,
                     "InputSource": "Manual",
-                    "FilePath": file_path,
+                    "FilePath": file_path, # Use the saved file path from PhotoManager
                     "LLMConfidence": category_suggestions.get('Confidence', 0.0),
-                    # Use actual confidence from categorizer
-                    "IsVerified": True,  # Manual entries are implicitly verified by user input
+                    "IsVerified": True,
                     "Notes": split_notes,
                     "TimestampAdded": datetime.datetime.now()
                 }
@@ -241,10 +240,9 @@ class TransactionManager:
                 self.metadata_manager.add_metadata_entries(
                     transaction_id=transaction_id,
                     metadata_entries=transaction_metadata_entries,
-                    source="Manual_Input",  # Changed source to reflect manual input directly
+                    source="Manual_Input",
                     split_index=-1
                 )
-
             print(f"Successfully added transaction {transaction_id} with {len(splits)} splits.")
             return transaction_id
 
@@ -254,27 +252,19 @@ class TransactionManager:
 
     def get_all_transactions(self, include_payee_names: bool = True) -> pd.DataFrame:
         """
-        Retrieves all transactions from the CSV.
-        Optionally enriches the DataFrame by replacing PayeeId with Payee Name.
+        Retrieves all transactions from the CSV. Optionally enriches the DataFrame by replacing PayeeId with Payee Name.
         """
         transactions_df = self.csv_manager.load_transactions()
-
         if transactions_df.empty:
             return pd.DataFrame()
 
         if include_payee_names:
             # Map Payer/Payee (which contains PayeeId) to Payee Name
-            # Create a dictionary for faster lookup
             payee_id_to_name_map = {
                 payee['PayeeId']: payee['Name']
-                for _, payee in self.payee_manager.get_all_payees_payers().iterrows() # Accessing internal df for efficiency
+                for _, payee in self.payee_manager.get_all_payees_payers().iterrows()
             }
-            # Use .loc to avoid SettingWithCopyWarning
-            # Assuming 'Payer/Payee' is the column with UUIDs
             transactions_df.loc[:, 'PayeeName'] = transactions_df['Payer/Payee'].map(payee_id_to_name_map).fillna(transactions_df['Payer/Payee'])
-            # Drop PayeeId column if not needed for display, or keep it for internal use
-            # For now, let's keep both for flexibility, but ensure UI uses PayeeName
-            # transactions_df = transactions_df.drop(columns=['Payer/Payee']) # Do not drop for now
 
         return transactions_df
 
@@ -303,6 +293,32 @@ class TransactionManager:
         ].copy() # Use .copy() to prevent SettingWithCopyWarning
 
         return filtered_df
+
+    def get_transaction_by_id(self, transaction_id: str) -> Optional[pd.DataFrame]:
+        """Retrieves all splits for a given transaction ID."""
+        df = self.get_all_transactions(include_payee_names=True)
+        filtered_df = df[df['TransactionID'] == transaction_id].copy()
+        if not filtered_df.empty:
+            # Also get associated metadata # WRONG. Metadata returned are a dict key, value, source,
+            # and we can have multiple rows for a single split.
+            filtered_df['Metadata'] = filtered_df.apply(
+                lambda row: self.metadata_manager.get_metadata_for_transaction(
+                    transaction_id=row['TransactionID'],
+                    split_index=row['SplitIndex']
+                ), axis=1
+            )
+            return filtered_df
+        return None
+
+    def update_transaction_status(self, transaction_id: str, is_verified: bool):
+        """Updates the 'IsVerified' status of a transaction."""
+        df = self.csv_manager.load_transactions()
+        if transaction_id in df['TransactionID'].values:
+            df.loc[df['TransactionID'] == transaction_id, 'IsVerified'] = is_verified
+            self.csv_manager.save_transactions(df)
+            print(f"Transaction {transaction_id} 'IsVerified' status updated to {is_verified}.")
+        else:
+            print(f"Transaction {transaction_id} not found for status update.")
 
     def update_transaction(self,
                            transaction_id: str,
@@ -450,120 +466,142 @@ class TransactionManager:
             self.csv_manager.save_transactions(transactions_df)
             print(f"Transaction {transaction_id} main fields updated successfully.")
 
-    def delete_transaction(self, transaction_id: str) -> bool:
+    def process_uploaded_invoice(self, uploaded_files: List[Any]) -> Dict[str, Any]:
         """
-        Deletes a transaction (all its splits) from the DataFrame and saves changes.
+        Processes an uploaded invoice image using OCR and LLM to extract transaction details.
+        Saves the image(s) via PhotoManager, then performs OCR and parsing.
+        Moves the processed file(s) to a processed or failed directory.
+
         Args:
-            transaction_id (str): The ID of the transaction to delete.
+            uploaded_files (List[Any]): A list of Streamlit UploadedFile objects (or similar file-like objects).
+
         Returns:
-            bool: True if the transaction was deleted successfully, False otherwise.
+            Dict[str, Any]: A dictionary containing extracted transaction data and parsed splits.
+                            Returns an empty dictionary if processing fails.
         """
-        transactions_df = self.csv_manager.load_transactions()
-        initial_row_count = len(transactions_df)
-        transactions_df = transactions_df[transactions_df['TransactionID'] != transaction_id].reset_index(drop=True)
+        if not uploaded_files:
+            raise ValueError("No uploaded files provided for invoice processing.")
 
-        if len(transactions_df) < initial_row_count:
-            self.csv_manager.save_transactions(transactions_df)
-            self.metadata_manager.delete_metadata_for_transaction(transaction_id)  # Delete associated metadata
-            print(f"Transaction {transaction_id} and its associated metadata deleted successfully.")
-            return True
-        else:
-            print(f"Transaction {transaction_id} not found for deletion.")
-            return False
+        # Generate a single transaction ID for all files in this logical invoice
+        transaction_id = f"TRN-{int(datetime.datetime.now().timestamp())}-{uuid.uuid4().hex[:6].upper()}"
+        print(f"Processing invoice(s) for new transaction ID: {transaction_id}")
 
-    def process_uploaded_invoice(self, uploaded_file) -> Dict[str, Any]:
-        """
-        Processes an uploaded invoice image, performs OCR, parses data,
-        and returns structured transaction suggestions and metadata.
-        Does NOT save to CSV yet; it prepares data for manual review/input.
-        """
-        if uploaded_file is None:
-            raise ValueError("No file uploaded for invoice processing.")
-
-        # Use configured path from app_config
-        input_raw_dir = self.input_raw_dir
-        os.makedirs(input_raw_dir, exist_ok=True)
-
-        file_extension = os.path.splitext(uploaded_file.name)[1]
-        temp_file_name = f"uploaded_invoice_{uuid.uuid4()}{file_extension}"
-        temp_file_path = os.path.join(input_raw_dir, temp_file_name)
-
+        saved_file_paths = []
         try:
-            with open(temp_file_path, "wb") as f:
-                f.write(uploaded_file.getbuffer())
-            print(f"Temporary invoice file saved to: {temp_file_path}")
+            # 1. Save uploaded files to the permanent storage via PhotoManager
+            saved_file_paths = self.photo_manager.save_photos_for_transaction(transaction_id, uploaded_files)
+            if not saved_file_paths:
+                raise Exception("No files were successfully saved by PhotoManager.")
 
-            ocr_text = self.ocr_processor.process_image(temp_file_path)
+            # For OCR processing, use all saved file paths
+            # Assuming OCRProcessor.process_image can handle a list of paths
+            extracted_text = self.ocr_processor.process_image(saved_file_paths)
+            if not extracted_text:
+                raise Exception("OCR failed to extract text from the invoice images.")
 
-            # Get the suggestion result for the payee from InvoiceParser
-            # InvoiceParser will use vendor_config_manager.suggest_conformed_payee
-            # and return the best suggestion. The UI will then verify this suggestion.
-            parsed_invoice_data = self.invoice_parser.parse_invoice_text(ocr_text)
+            # 3. Parse the extracted text using the InvoiceParser
+            parsed_invoice_data = self.invoice_parser.parse_invoice_text(extracted_text)
 
-            # The payee from parsed_invoice_data is already the conformed name
-            conform_payee = parsed_invoice_data['payee']
-            if conform_payee:
-                # Ensure this conformed payee is in the payee database
-                self.payee_manager.add_payee(conform_payee)
+            if not parsed_invoice_data or not parsed_invoice_data.get('total_amount'):
+                raise Exception("Invoice parsing failed to extract essential data (e.g., total amount).")
 
-            # Determine main transaction type (usually Expense for invoices, but can be customized)
-            main_transaction_type = "Expense"  # TODO: Update to match the given invoice
+            # 4. Determine main transaction type (Expense, Income, Transfer)
+            main_transaction_type = parsed_invoice_data.get('transaction_type', 'Expense') # Default to Expense
 
-            # Auto-Categorize Splits using the HybridCategorizer
-            for split in parsed_invoice_data['splits']:
-                categorization = self.hybrid_categorizer.suggest_category(
-                    description=split['description'],
-                    current_notes=parsed_invoice_data['notes'],
-                    payee=conform_payee, # Use the conformed payee from invoice parsing
-                    account=parsed_invoice_data['account'],
+            # 5. Categorize each split (or the main transaction if no splits)
+            processed_splits = []
+            metadata_from_invoice = []
+
+            # If parser provides explicit splits, process them
+            if parsed_invoice_data.get('splits'):
+                for split in parsed_invoice_data['splits']:
+                    category_suggestions = self.hybrid_categorizer.suggest_category(
+                        description=split.get('description', ''),
+                        current_notes=split.get('notes', ''),
+                        payee=parsed_invoice_data.get('payee_conformed_name', ''),
+                        account=parsed_invoice_data.get('account', ''),
+                        transaction_type=main_transaction_type
+                    )
+                    split['budget_scope'] = category_suggestions.get('BudgetScope', '')
+                    split['category'] = category_suggestions.get('Category', '')
+                    split['sub_category'] = category_suggestions.get('SubCategory', '')
+                    split['full_budget_path'] = category_suggestions.get('BudgetPath', '')
+                    split['llm_confidence'] = category_suggestions.get('Confidence', 0.0)
+                    split['notes'] = f"[{category_suggestions.get('Source', 'Auto')} - Conf: {category_suggestions.get('Confidence', 0.0):.2f}] {split.get('notes', '')}".strip()
+                    processed_splits.append(split)
+            else:
+                # If no explicit splits, categorize the whole transaction as one split
+                category_suggestions = self.hybrid_categorizer.suggest_category(
+                    description=parsed_invoice_data.get('description', ''),
+                    current_notes=parsed_invoice_data.get('notes', ''),
+                    payee=parsed_invoice_data.get('payee_conformed_name', ''),
+                    account=parsed_invoice_data.get('account', ''),
                     transaction_type=main_transaction_type
                 )
-                split['budget_scope'] = categorization['BudgetScope']
-                split['category'] = categorization['Category']
-                split['sub_category'] = categorization['SubCategory']
-                split['full_budget_path'] = categorization['BudgetPath']
-                split['llm_confidence'] = categorization['Confidence']
-                split['categorization_source'] = categorization['Source']
-                if split['full_budget_path'] != 'Uncategorized:Unassigned':
-                    split[
-                        'notes'] = f"[{categorization['Source']} - Conf: {categorization['Confidence']:.2f}] {split['notes'] or ''}".strip()
+                processed_splits.append({
+                    "description": parsed_invoice_data.get('description', ''),
+                    "amount": parsed_invoice_data['total_amount'],
+                    "budget_scope": category_suggestions.get('BudgetScope', ''),
+                    "category": category_suggestions.get('Category', ''),
+                    "sub_category": category_suggestions.get('SubCategory', ''),
+                    "full_budget_path": category_suggestions.get('BudgetPath', ''),
+                    "llm_confidence": category_suggestions.get('Confidence', 0.0),
+                    "notes": f"[{category_suggestions.get('Source', 'Auto')} - Conf: {category_suggestions.get('Confidence', 0.0):.2f}] {parsed_invoice_data.get('notes', '')}".strip()
+                })
 
-            metadata_from_invoice = []
-            for tax in parsed_invoice_data.get('taxes', []):
-                metadata_from_invoice.append(
-                    {'key': f"Tax - {tax['name']}", 'value': tax['amount'], 'source': 'Invoice OCR'})
+            # Extract any general metadata from the invoice parsing
+            if parsed_invoice_data.get('metadata'):
+                metadata_from_invoice.extend(parsed_invoice_data['metadata'])
 
-            for key, value in parsed_invoice_data.get('metadata', {}).items():
-                metadata_from_invoice.append({'key': key, 'value': value, 'source': 'Invoice OCR'})
-
+            # Return a structured dictionary for the UI to review and save
             return {
-                "transaction_id": str(uuid.uuid4()),
-                "payee": conform_payee,
+                "transaction_id": transaction_id,
                 "date": parsed_invoice_data['date'],
+                "payee_raw": parsed_invoice_data['payee_raw'],
+                "payee_conformed_name": parsed_invoice_data['payee_conformed_name'],
                 "account": parsed_invoice_data['account'],
                 "total_amount": parsed_invoice_data['total_amount'],
-                "splits": parsed_invoice_data['splits'],
+                "splits": processed_splits,
                 "notes": parsed_invoice_data['notes'],
-                "file_path": temp_file_path,
+                "file_path": saved_file_paths[0] if saved_file_paths else '', # Store the path of the first saved file
                 "metadata": metadata_from_invoice,
-                "transaction_type": main_transaction_type  # Return transaction type for UI
+                "transaction_type": main_transaction_type
             }
 
         except Exception as e:
             print(f"Error processing uploaded invoice: {e}")
-            failed_dir = self.input_failed_dir  # Use path from app_config
-            os.makedirs(failed_dir, exist_ok=True)
-            failed_file_path = os.path.join(failed_dir, os.path.basename(temp_file_path))
-            if os.path.exists(temp_file_path):
-                os.rename(temp_file_path, failed_file_path)
+            # If an error occurs, PhotoManager should ideally handle cleanup if files were saved.
+            # Here, we only clean up if we manually created temp files (which we no longer do).
+            # The files are already saved by PhotoManager, so they persist for debugging/review.
+            # TODO: Update photomanager to move processed or error files in the correct directory.
             raise
 
-        finally:
-            # Ensure proper file movement after processing
-            if os.path.exists(temp_file_path) and "Error" not in locals().get('e', ''):
-                processed_dir = self.input_processed_dir  # Use path from app_config
-                os.makedirs(processed_dir, exist_ok=True)
-                processed_file_path = os.path.join(processed_dir, os.path.basename(temp_file_path))
-                # Only move if it hasn't already been moved to failed_dir due to an error
-                if os.path.exists(temp_file_path):  # Check again if file still exists before moving
-                    os.rename(temp_file_path, processed_file_path)
+    def delete_transaction(self, transaction_id: str) -> bool:
+        """
+        Deletes a transaction and all its associated splits and metadata from the CSVs.
+        Also deletes any associated photo files.
+        """
+        # Load current transactions and metadata
+        transactions_df = self.csv_manager.load_transactions()
+        metadata_df = self.csv_manager.load_metadata()
+
+        # Check if transaction exists
+        if transaction_id not in transactions_df['TransactionID'].values:
+            print(f"Transaction {transaction_id} not found for deletion.")
+            return False
+
+        # 1. Delete associated photos using PhotoManager
+        self.photo_manager.delete_photos_for_transaction(transaction_id)
+        print(f"Associated photos for transaction {transaction_id} deleted.")
+
+        # 2. Remove transaction entries from transactions.csv
+        initial_transactions_count = len(transactions_df)
+        transactions_df = transactions_df[transactions_df['TransactionID'] != transaction_id].reset_index(drop=True)
+        self.csv_manager.save_transactions(transactions_df)
+        print(f"Removed {initial_transactions_count - len(transactions_df)} splits for transaction {transaction_id} from transactions.csv.")
+
+        # 3. Remove associated metadata entries from metadata.csv
+        self.metadata_manager.delete_metadata_for_transaction(transaction_id)  # Delete associated metadata
+        print(f"Transaction {transaction_id} and all its associated data successfully deleted.")
+
+        return True
