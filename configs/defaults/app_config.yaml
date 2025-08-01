@@ -13,9 +13,10 @@ paths:
   transactions_csv_file: 'data/transactions.csv'
   payees_csv_file: 'data/payees.csv'
   metadata_csv_file: 'data/metadata.csv'
+  photos_reference_csv_file: 'data/photos_reference.csv'
   # Directories for ML models and invoice processing
   models_dir: 'models/'
-  invoice_input_dir: 'data/invoices/input/'     # Raw uploaded invoices/receipts
+  invoices_input_dir: 'data/invoices/input/'     # Raw uploaded invoices/receipts
   invoice_processed_dir: 'data/invoices/processed/' # Successfully processed invoices
   invoice_failed_dir: 'data/invoices/failed/'   # Invoices that failed processing
 
